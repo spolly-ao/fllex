@@ -1,0 +1,12 @@
+# Compilação
+tmp/
+bin/
+*.exe
+
+# Ambiente. O .env.example é que fica versionado.
+.env
+.env.local
+
+# Sistema
+.DS_Store
+Thumbs.db
