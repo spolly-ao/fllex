@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  verificar:
+    name: Verificar
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # O gofmt é um portão e não uma sugestão: o formato é o que o Go decide,
+      # e uma revisão gasta em espaços é uma revisão que não olhou para a lógica.
+      - name: gofmt
+        run: |
+          fora=$(gofmt -l .)
+          if [ -n "$fora" ]; then
+            echo "Estes ficheiros não estão formatados:"
+            echo "$fora"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # Com -race, porque esta biblioteca corre dentro de um servidor HTTP com
+      # pedidos em paralelo, e uma corrida no motor de renovação é dinheiro
+      # cobrado duas vezes. Com -count=1 para a cache não esconder um teste que
+      # passou a falhar.
+      - name: go test
+        run: go test ./... -race -count=1 -timeout=5m
