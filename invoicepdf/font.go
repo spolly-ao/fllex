@@ -158,6 +158,9 @@ var winAnsiSpecial = map[rune]byte{
 	'”': 0x94,
 	'•': 0x95, // marca de lista
 	'–': 0x96, // travessão curto
+	// fllex:em-dash-ok, aqui o travessão é o carácter que o PDF tem de saber
+	// codificar. Uma factura pode trazê-lo no texto de um cliente, e sem esta
+	// entrada sairia um caractere de substituição no documento.
 	'—': 0x97, // travessão longo
 	'˜': 0x98,
 	'™': 0x99, // marca registada

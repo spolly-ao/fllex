@@ -178,6 +178,7 @@ func TestPortugueseAccentsSurvive(t *testing.T) {
 }
 
 func TestWinAnsiEncoding(t *testing.T) {
+	// fllex:em-dash-ok, o travessão faz parte do que se está a testar.
 	got := toWinAnsi("ação €5 — “aspas”")
 	want := []byte{'a', 0xE7, 0xE3, 'o', ' ', 0x80, '5', ' ', 0x97, ' ', 0x93, 'a', 's', 'p', 'a', 's', 0x94}
 	if !bytes.Equal(got, want) {

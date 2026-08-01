@@ -25,22 +25,22 @@ go get github.com/spolly-ao/fllex
 
 **Dinheiro e tempo**, que é onde os erros custam caro:
 
-- `money` — unidades menores inteiras, repartição sem perder cêntimos, conversão de moeda com validade.
-- `cycle` — datas de ciclo com dia-âncora, prestações, prorrateamento, janela de renovação.
-- `pricing` — escalões por volume ou escalonados, e preço de grupos com titular e membros.
+- `money`: unidades menores inteiras, repartição sem perder cêntimos, conversão de moeda com validade.
+- `cycle`: datas de ciclo com dia-âncora, prestações, prorrateamento, janela de renovação.
+- `pricing`: escalões por volume ou escalonados, e preço de grupos com titular e membros.
 
 **O ciclo de cobrança**:
 
-- `payment` — modelo canónico, contrato de gateway, registo e resolução por método e moeda.
-- `subscription` — motor de renovação: avisos, emissão de cobrança, tolerância, retentativas, expiração.
-- `coupon` — cupões de desconto, com as recusas explicadas ao cliente.
-- `entitlement` — limites de plano e suspensão reversível dos recursos que passam do tecto.
-- `invoice` — proformas, facturas e notas de crédito, com numeração sequencial.
-- `invoicepdf` — o PDF desses documentos, escrito à mão sobre a biblioteca padrão.
-- `mandate` — autorizações de débito directo.
-- `tokens` — links de pagamento de uso único.
-- `outbox` — eventos que saem se e só se a alteração ficou gravada.
-- `worker` — processos periódicos: confirmação por consulta, reconciliação, expiração.
+- `payment`: modelo canónico, contrato de gateway, registo e resolução por método e moeda.
+- `subscription`: motor de renovação: avisos, emissão de cobrança, tolerância, retentativas, expiração.
+- `coupon`: cupões de desconto, com as recusas explicadas ao cliente.
+- `entitlement`: limites de plano e suspensão reversível dos recursos que passam do tecto.
+- `invoice`: proformas, facturas e notas de crédito, com numeração sequencial.
+- `invoicepdf`: o PDF desses documentos, escrito à mão sobre a biblioteca padrão.
+- `mandate`: autorizações de débito directo.
+- `tokens`: links de pagamento de uso único.
+- `outbox`: eventos que saem se e só se a alteração ficou gravada.
+- `worker`: processos periódicos: confirmação por consulta, reconciliação, expiração.
 
 ## Como se usa
 
