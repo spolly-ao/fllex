@@ -213,3 +213,12 @@ diz o que se partia.
 ```
 gofmt -w . && go build ./... && go vet ./... && go test ./...
 ```
+
+## Licença
+
+MIT, como os SDK de JavaScript e de PHP. Está em `LICENSE`, e não é só
+formalidade: sem um ficheiro de licença que o detector reconheça, o
+[pkg.go.dev](https://pkg.go.dev/github.com/spolly-ao/fllex) marca o módulo como
+não redistribuível e **não mostra a documentação**. Quem instala um SDK de
+pagamentos tem o direito de ler o que está a pôr no servidor dele, e isso inclui
+poder lê-lo onde o procura.
