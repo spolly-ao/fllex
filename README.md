@@ -17,6 +17,7 @@ go get github.com/spolly-ao/fllex
 | Pacote | Métodos | Particularidade |
 |---|---|---|
 | `providers/stripe` | cartão, subscrições recorrentes | API REST directa, sem SDK; webhooks assinados |
+| `providers/emis` | Multicaixa Express | directo na EMIS, sem agregador; frame de pagamento e callback sem assinatura |
 | `providers/momenu` | Multicaixa Express, eKwanza, referência | kwanza; emite factura fiscal; sem webhook fiável |
 | `providers/proxypay` | referência ATM | fila de pagamentos confirmados como rede de segurança |
 | `providers/proxypaydds` | débito directo em conta | mandatos CAP e SAP, fluxo de eventos ordenado |

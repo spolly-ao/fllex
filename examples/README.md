@@ -14,6 +14,7 @@ deixe de estar certo falha, em vez de enganar quem o lê.
 | Ficheiro | O que mostra |
 |---|---|
 | `cobrar_test.go` | Registar gateways e cobrar. O `Kind` da resposta diz o que mostrar a seguir. Um gateway sem chave fica registado mas não é escolhido. |
+| `express_test.go` | O Multicaixa Express directo na EMIS: o frame que o cliente abre, o callback que confirma, e o callback de outra conta que é recusado. |
 | `subscricoes_test.go` | Renovar sem deriva de datas, a renovação cobrar o preço de tabela e não o que foi pago, e a tolerância a dar cobertura a sério. |
 | `ciclos_test.go` | A janela de renovação, o dia-âncora de quem assina a 31, as prestações de um contrato anual e o prorrateamento. |
 | `dinheiro_test.go` | Unidades menores inteiras e a repartição que não perde cêntimos. |
