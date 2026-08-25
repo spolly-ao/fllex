@@ -139,6 +139,11 @@ type Expirer struct {
 
 // Run faz uma passagem.
 func (e *Expirer) Run(ctx context.Context) {
+	if e.Registry == nil {
+		e.log().Error("expirer: Registry não pode ser nil")
+		return
+	}
+
 	limit := e.BatchSize
 	if limit <= 0 {
 		limit = 100
