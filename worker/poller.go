@@ -41,6 +41,11 @@ type Poller struct {
 
 // Run faz uma passagem.
 func (p *Poller) Run(ctx context.Context) {
+	if p.Registry == nil {
+		p.log().Error("expirer: Registry não pode ser nil")
+		return
+	}
+
 	limit := p.BatchSize
 	if limit <= 0 {
 		limit = 50
