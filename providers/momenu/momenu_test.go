@@ -88,7 +88,7 @@ func TestChargeMCXRejectsBadPhoneBeforeNetwork(t *testing.T) {
 	}
 }
 
-func TestChargeReferenceSeparatesTheTwoIdentifiers(t *testing.T) {
+func TestChargeReferenceGuardaOTransactionIDNosDois(t *testing.T) {
 	p, done := newTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `{"success":true,"operationId":"op-1","transactionId":"tx-1",
 			"referenceNumber":"987654321","entity":"01234","dueDate":"2025-08-05"}`)
@@ -105,13 +105,21 @@ func TestChargeReferenceSeparatesTheTwoIdentifiers(t *testing.T) {
 	if res.Kind != payment.KindReference || res.Status != payment.StatusPending {
 		t.Errorf("resultado = %+v", res)
 	}
-	// Trocar os dois identificadores devolve sempre "não encontrado": o webhook
-	// correlaciona pelo da transacção e a consulta usa o da operação.
+	// **Este teste afirmava o contrário, e era o contrário que estava errado.**
+	// Houve um tempo em que a consulta de estado era pelo operationId, e o
+	// StatusRef levava-o. A consulta passou a ser pelo transactionId, e
+	// enquanto o StatusRef levou o outro a consulta devolvia "não encontrado":
+	// nenhuma referência paga chegava a fechar.
 	if res.ProviderRef != "tx-1" {
 		t.Errorf("referência do gateway = %q, queria tx-1", res.ProviderRef)
 	}
-	if res.StatusRef != "op-1" {
-		t.Errorf("referência de consulta = %q, queria op-1", res.StatusRef)
+	if res.StatusRef != "tx-1" {
+		t.Errorf("referência de consulta = %q, queria tx-1", res.StatusRef)
+	}
+	// O operationId continua a vir e guarda-se, porque a API ainda o devolve,
+	// e não porque sirva para consultar.
+	if res.Raw["operationId"] != "op-1" {
+		t.Errorf("operationId perdido: %v", res.Raw)
 	}
 	if res.Entity != "01234" || res.Reference != "987654321" {
 		t.Errorf("dados de pagamento = %q / %q", res.Entity, res.Reference)
@@ -122,17 +130,21 @@ func TestChargeReferenceSeparatesTheTwoIdentifiers(t *testing.T) {
 }
 
 func TestVerifyChargeReadsPaidStatus(t *testing.T) {
+	var caminho string
 	p, done := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("merchantTransactionId"); got != "tx-1" {
-			t.Errorf("identificador da ordem = %q, queria tx-1", got)
-		}
-		fmt.Fprint(w, `{"success":true,"payment":{"status":"paid"},"invoiceUrl":"https://f/1"}`)
+		caminho = r.URL.Path
+		fmt.Fprint(w, `{"success":true,"status":"paid","amount":5900,"paidAt":"2026-10-15T10:00:00Z","invoiceUrl":"https://f/1"}`)
 	})
 	defer done()
 
-	st, err := p.VerifyCharge(context.Background(), "op-1", "tx-1")
+	st, err := p.VerifyCharge(context.Background(), "tx-1", "pay_1")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Uma consulta só, para todos os métodos, e pelo transactionId. Os
+	// caminhos por método deixaram de existir.
+	if caminho != "/api/payment/status/tx-1" {
+		t.Errorf("caminho = %q", caminho)
 	}
 	if !st.Paid || st.Status != payment.StatusApproved {
 		t.Errorf("estado = %+v, queria pago", st)
@@ -140,41 +152,27 @@ func TestVerifyChargeReadsPaidStatus(t *testing.T) {
 	if st.InvoiceURL == "" {
 		t.Error("a factura devia vir preenchida")
 	}
+	// O estado novo traz o valor, e é ele que apanha um pagamento parcial.
+	if st.Amount == nil || st.Amount.Minor != money.FromMajor(5900, money.AOA).Minor {
+		t.Errorf("valor = %v", st.Amount)
+	}
+	if st.PaidAt == nil {
+		t.Error("um pagamento pago tem de dizer quando")
+	}
 }
 
 func TestVerifyChargePendingStaysPending(t *testing.T) {
 	p, done := newTestProvider(t, func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":true,"payment":{"status":"pending"}}`)
+		fmt.Fprint(w, `{"success":true,"status":"open"}`)
 	})
 	defer done()
 
-	st, err := p.VerifyCharge(context.Background(), "op-1", "")
+	st, err := p.VerifyCharge(context.Background(), "tx-1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if st.Paid {
 		t.Error("uma referência por pagar não pode dar por paga")
-	}
-}
-
-func TestParseWebhookIsOnlyAHint(t *testing.T) {
-	// A entrega não é assinada: o evento serve para acordar a confirmação, e
-	// nunca como prova de pagamento.
-	p := New(Config{APIKey: "chave"})
-	ev, err := p.ParseWebhook([]byte(`{"event":"payment.confirmed","merchantTransactionId":"tx-1","operationStatus":"1"}`), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ev.Type != payment.EventChargeSucceeded {
-		t.Errorf("tipo = %s", ev.Type)
-	}
-	if ev.Status == payment.StatusApproved {
-		t.Error("um webhook não assinado não pode devolver o estado como aprovado")
-	}
-	// Um corpo ilegível não é erro: é ruído a ignorar.
-	ev, err = p.ParseWebhook([]byte(`isto não é json`), "")
-	if err != nil || !ev.Ignorable() {
-		t.Errorf("corpo ilegível deu %v / %+v", err, ev)
 	}
 }
 

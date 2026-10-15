@@ -278,6 +278,27 @@ type WebhookParser interface {
 	ParseWebhook(payload []byte, signature string) (*Event, error)
 }
 
+// WebhookHeaderParser é a capacidade de validar eventos cuja assinatura não
+// cabe num cabeçalho só.
+//
+// O [WebhookParser] recebe uma assinatura e chega para quem a põe toda num
+// cabeçalho: o Stripe manda `t=...,v1=...` num só. Há gateways que a partem em
+// dois, e aí falta o que não veio. O MoMenu é o caso: a assinatura está em
+// `x-webhook-signature` e o carimbo que entra no cálculo está em
+// `x-webhook-timestamp`, e sem o carimbo não se consegue verificar nada.
+//
+// Quem implementar isto deve implementar também o [WebhookParser], para quem só
+// tiver a assinatura à mão. O que o [WebhookParser] faz nesse caso é decisão do
+// provider, e recusar é a resposta certa quando lhe falta o que precisa.
+type WebhookHeaderParser interface {
+	// ParseWebhookWithHeaders valida e traduz o evento com os cabeçalhos do
+	// pedido à mão.
+	//
+	// As chaves vêm em minúsculas, para quem chama não ter de adivinhar a
+	// capitalização que o gateway usou.
+	ParseWebhookWithHeaders(payload []byte, headers map[string]string) (*Event, error)
+}
+
 // Refund é o pedido de devolução de dinheiro já cobrado.
 type Refund struct {
 	// ChargeRef é a cobrança a estornar.

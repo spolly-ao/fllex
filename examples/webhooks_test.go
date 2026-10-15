@@ -1,7 +1,11 @@
 package examples_test
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"time"
 
 	"github.com/spolly-ao/fllex/providers/momenu"
 	"github.com/spolly-ao/fllex/providers/stripe"
@@ -36,19 +40,69 @@ func Example_webhookDoStripe() {
 	// estado:       approved
 }
 
-// O MoMenu não assina as entregas. O evento sai sempre pendente de propósito:
-// vale como aviso de que se pode ir consultar o estado, e nunca como prova de
-// pagamento.
+// O MoMenu assina as entregas, e a assinatura está partida por dois
+// cabeçalhos: a assinatura em `x-webhook-signature` e o carimbo que entra no
+// cálculo em `x-webhook-timestamp`. É por isso que se usa o
+// [payment.WebhookHeaderParser] e não o [payment.WebhookParser].
+//
+// Até 2026 não era assinada, e esta integração tratava o evento como uma
+// sugestão. Hoje uma assinatura que não bate é um erro, e não um aviso.
 func Example_webhookDoMoMenu() {
-	provider := momenu.New(momenu.Config{APIKey: "chave"})
+	provider := momenu.New(momenu.Config{
+		APIKey:        "chave",
+		WebhookSecret: "segredo-da-conta",
+		Now:           func() time.Time { return time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC) },
+	})
 
-	corpo := []byte(`{"event":"payment.confirmed","merchantTransactionId":"tx-1","operationStatus":"1"}`)
+	corpo := []byte(`{"event":"payment.confirmed","merchantTransactionId":"tx-1",` +
+		`"operationStatus":"1","externalReferenceOpcional":"encomenda-42"}`)
 
-	ev, _ := provider.ParseWebhook(corpo, "")
-	fmt.Println("tipo:  ", ev.Type)
-	fmt.Println("estado:", ev.Status, "(ir confirmar antes de dar por pago)")
+	// O que o MoMenu calcula: HMAC-SHA256, em hexadecimal, sobre o carimbo, um
+	// ponto e o corpo em bruto.
+	carimbo := "2026-10-15T10:00:00Z"
+	mac := hmac.New(sha256.New, []byte("segredo-da-conta"))
+	mac.Write([]byte(carimbo + "."))
+	mac.Write(corpo)
+
+	ev, err := provider.ParseWebhookWithHeaders(corpo, map[string]string{
+		"x-webhook-signature": hex.EncodeToString(mac.Sum(nil)),
+		"x-webhook-timestamp": carimbo,
+	})
+	if err != nil {
+		fmt.Println("erro:", err)
+		return
+	}
+	fmt.Println("tipo:      ", ev.Type)
+	fmt.Println("estado:    ", ev.Status)
+	fmt.Println("referência:", ev.Reference)
 
 	// Output:
-	// tipo:   charge_succeeded
-	// estado: pending (ir confirmar antes de dar por pago)
+	// tipo:       charge_succeeded
+	// estado:     approved
+	// referência: encomenda-42
+}
+
+// Um corpo alterado em trânsito não passa, e é essa a diferença que conta: é o
+// webhook que marca uma referência como paga.
+func Example_webhookDoMoMenuAdulterado() {
+	provider := momenu.New(momenu.Config{
+		APIKey:        "chave",
+		WebhookSecret: "segredo-da-conta",
+		Now:           func() time.Time { return time.Date(2026, 10, 15, 10, 0, 0, 0, time.UTC) },
+	})
+
+	carimbo := "2026-10-15T10:00:00Z"
+	mac := hmac.New(sha256.New, []byte("segredo-da-conta"))
+	mac.Write([]byte(carimbo + ".{\"operationStatus\":\"4\"}"))
+
+	// A assinatura é de um corpo que dizia "recusado"; o corpo que chega diz
+	// "pago".
+	_, err := provider.ParseWebhookWithHeaders([]byte(`{"operationStatus":"1"}`), map[string]string{
+		"x-webhook-signature": hex.EncodeToString(mac.Sum(nil)),
+		"x-webhook-timestamp": carimbo,
+	})
+	fmt.Println("erro:", err)
+
+	// Output:
+	// erro: fllex: assinatura de webhook inválida
 }

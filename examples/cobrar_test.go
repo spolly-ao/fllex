@@ -67,5 +67,5 @@ func Example_gatewaySemChave() {
 
 	// Output:
 	// sem chave: []
-	// com chave: [mcx reference ekwanza]
+	// com chave: [mcx reference]
 }

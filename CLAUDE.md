@@ -1,7 +1,62 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # fllex
 
 Biblioteca Go de pagamentos, subscrições e cobranças. Ver `README.md` para a
 visão geral.
+
+É o submódulo `shared/lib` do espaço de trabalho `fllex-workspace` e um dos três
+repositórios **públicos** da casa: tudo o que aqui entra é lido por quem
+integra. O `services/core` importa-a como `github.com/spolly-ao/fllex`, e em
+local usa esta pasta pelo `go.work` da raiz do espaço de trabalho, nunca por um
+`replace` no `go.mod`. Uma alteração de comportamento que o core precise de
+acompanhar faz-se nos dois na mesma passagem, e commita-se a partir da raiz com
+`bash bin/fllex commit -m "..."`.
+
+## Comandos
+
+```
+gofmt -w . && go build ./... && go vet ./... && go test -cover ./...
+
+go test ./... -race -count=1 -timeout=5m   # o que a CI corre
+go test ./subscription/ -run TestNome -v   # um teste só
+go test -coverprofile=c.out ./cycle/ && go tool cover -func=c.out | grep -v 100.0%
+go test ./examples/                        # os exemplos, que são testes Example
+```
+
+A CI (`.github/workflows/ci.yml`) falha com `gofmt -l` não vazio, e corre os
+testes com `-race`: o motor de renovação corre dentro de servidores HTTP com
+pedidos em paralelo.
+
+## Arquitectura
+
+**`payment` é o centro.** Define o modelo canónico (`Payment`, `Status`,
+`Method`, `Event`), o contrato `Provider` e o `Registry`. A ordem de registo é a
+ordem de preferência, e um provider sem credenciais fica registado mas não é
+escolhido: é assim que o kwanza vai pelo gateway local e o resto pelo Stripe
+sem um `if`. As capacidades opcionais (`Verifier`, `Canceller`, `Subscriber`,
+`WebhookParser`, `Refunder`, `Reporter`) estão em `payment/provider.go`.
+
+**`providers/*` traduzem, e só eles.** Cada um converte `ChargeRequest` para a
+língua do gateway e as respostas e webhooks de volta para `payment.Event`,
+sobre o transporte comum de `internal/httpx` (erros do gateway, repetição só de
+leituras). `providers/ensaio` não fala com rede nenhuma: é o que as contas em
+modo de teste usam, e não pode ter caminho para produção. `wallet` também é um
+`payment.Provider`.
+
+**Por cima do `payment`, os pacotes de ciclo de vida** usam só interfaces:
+`subscription.Engine` junta `subscription.Store`, `payment.Store`, o `Registry`
+e um `Notifier`, e decide avisos, emissão, tolerância e expiração a partir das
+janelas de `cycle`; `worker` corre as passagens periódicas (consulta de estado,
+reconciliação, expiração); `outbox` guarda o evento na transacção do facto e
+entrega-o depois. `money`, `cycle`, `pricing` e `phone` são folhas puras sem
+estado.
+
+**`examples/` são testes `Example` com `// Output:`**, um ficheiro por assunto.
+Um comportamento público que mude parte o exemplo correspondente, e é para
+corrigir lá também.
 
 ## Regras do projecto
 
@@ -73,25 +128,41 @@ nunca corre não defende nada. Nesses casos apaga-se a linha e fica um comentár
 a dizer porque é que o caso não existe, em vez de se escrever um teste artificial
 para lá chegar.
 
-Antes de entregar:
-
-```
-gofmt -w . && go build ./... && go vet ./... && go test -cover ./...
-```
+Antes de entregar, a primeira linha da secção "Comandos", com todos os pacotes a
+100%.
 
 ## Armadilhas conhecidas
 
 - **Deriva de datas.** Usar `cycle.AddMonths` ciclo após ciclo prende quem
   assinou a 31 no dia 28. Para subscrições, usar sempre as variantes com
   dia-âncora (`AddMonthsAnchored`, `NthPeriodEnd`, `PeriodEndAnchored`).
-- **Referências de gateway não são intermutáveis.** No MoMenu, o webhook
-  correlaciona pelo `transactionId` e a consulta de estado usa o `operationId`.
-  Trocá-los devolve sempre "não encontrado". Daí `ProviderRef` e `StatusRef`
-  separados.
-- **Idempotência do lado de fora.** Nada nesta biblioteca repete
-  automaticamente uma cobrança: os gateways angolanos não aceitam chave de
-  idempotência, e repetir é cobrar duas vezes. Só leituras são repetidas
-  (`httpx.Request.Idempotent`).
+- **Referências de gateway não são intermutáveis, e a do MoMenu inverteu-se.**
+  O `ProviderRef` e o `StatusRef` são separados porque há gateways que
+  correlacionam o webhook por um identificador e aceitam a consulta de estado por
+  outro. Esta nota dizia que no MoMenu a consulta era pelo `operationId`; hoje é
+  pelo `transactionId`, e enquanto o `StatusRef` levou o outro a consulta
+  devolvia "não encontrado" e **nenhuma referência paga chegava a fechar**. Ao
+  mudar de gateway ou de versão de API, confirmar qual é qual antes de confiar
+  no que está escrito aqui.
+- **Idempotência do lado de fora, e o MoMenu é a excepção.** Nada nesta
+  biblioteca repete automaticamente uma cobrança: o `httpx` repete o pedido tal
+  como ele é, e um gateway sem chave de idempotência cobra duas vezes. Só
+  leituras são repetidas (`httpx.Request.Idempotent`).
+
+  **O MoMenu passou a aceitar `Idempotency-Key`** nas cobranças, válida 24 horas
+  e só para respostas de sucesso: ali, repetir com a mesma chave devolve a
+  resposta original e não cobra outra vez. O `providers/momenu` manda a nossa
+  referência como chave, e é isso que torna recuperável uma resposta de
+  Multicaixa Express perdida a meio de três minutos. A regra geral continua a
+  valer para os outros, e esta nota existe porque a armadilha estava escrita aqui
+  como se valesse para todos.
+
+- **A documentação de um gateway muda sem avisar, e a nossa não.** O MoMenu
+  mudou o caminho da consulta de estado, o identificador que ela recebe, a forma
+  do corpo, passou a assinar os webhooks e retirou o eKwanza, e nada disto deu
+  erro de compilação: a integração ficou a devolver "pendente" para sempre. Ao
+  tocar num provider, reler a documentação dele primeiro, e desconfiar
+  especialmente dos comentários que descrevem o que o gateway faz.
 - **Ordem nas filas.** Aplicar o efeito antes de retirar o pagamento da fila do
   Proxypay. Ao contrário, um processo que morra no meio perde o pagamento para
   sempre. O mesmo vale para o `outbox`: entregar, depois marcar.

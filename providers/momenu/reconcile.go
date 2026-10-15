@@ -171,7 +171,11 @@ func (r *Reconciler) reconcileOne(ctx context.Context, a Attempt, invoices []Inv
 
 	var matches []InvoiceDetail
 	for _, item := range shortlist {
-		detail, err := r.Client.GetInvoice(ctx, item.InvoiceID)
+		// Pelo **número** da factura, e não pelo identificador: é o número que
+		// o caminho da API aceita, e passar o identificador não encontrava
+		// nada, o que tirava à reconciliação justamente o telemóvel de que ela
+		// precisa para correlacionar.
+		detail, err := r.Client.GetInvoice(ctx, item.InvoiceNumber)
 		if err != nil {
 			r.log().Warn("fllex: falha a obter detalhe de factura", "err", err, "invoice", item.InvoiceID)
 			continue

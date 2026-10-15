@@ -184,6 +184,18 @@ func (r *Registry) WebhookParser(name string) (WebhookParser, bool) {
 	return w, ok
 }
 
+// WebhookHeaderParser devolve a capacidade de leitura de webhooks com os
+// cabeçalhos do pedido, para os gateways que partem a assinatura em mais do que
+// um cabeçalho.
+func (r *Registry) WebhookHeaderParser(name string) (WebhookHeaderParser, bool) {
+	p, ok := r.Get(name)
+	if !ok {
+		return nil, false
+	}
+	w, ok := p.(WebhookHeaderParser)
+	return w, ok
+}
+
 // Subscriber devolve a capacidade de gestão de subscrições de um provider.
 func (r *Registry) Subscriber(name string) (Subscriber, bool) {
 	p, ok := r.Get(name)

@@ -377,6 +377,11 @@ func TestRegistryCapabilityLookups(t *testing.T) {
 	if _, ok := r.WebhookParser("capaz"); !ok {
 		t.Error("devia expor a leitura de webhooks")
 	}
+	// A leitura com cabeçalhos é para os gateways que partem a assinatura por
+	// mais do que um cabeçalho, como o MoMenu.
+	if _, ok := r.WebhookHeaderParser("capaz"); !ok {
+		t.Error("devia expor a leitura de webhooks com cabeçalhos")
+	}
 	if _, ok := r.Subscriber("capaz"); !ok {
 		t.Error("devia expor a gestão de subscrições")
 	}
@@ -389,6 +394,7 @@ func TestRegistryCapabilityLookups(t *testing.T) {
 	for _, look := range []func(string) bool{
 		func(n string) bool { _, ok := r2.Verifier(n); return ok },
 		func(n string) bool { _, ok := r2.WebhookParser(n); return ok },
+		func(n string) bool { _, ok := r2.WebhookHeaderParser(n); return ok },
 		func(n string) bool { _, ok := r2.Subscriber(n); return ok },
 		func(n string) bool { _, ok := r2.Refunder(n); return ok },
 	} {
@@ -436,7 +442,11 @@ func (c *capableProvider) SupportsCurrency(money.Currency) bool { return true }
 func (c *capableProvider) VerifyCharge(_ context.Context, _, _ string) (ChargeStatus, error) {
 	return ChargeStatus{}, nil
 }
-func (c *capableProvider) ParseWebhook([]byte, string) (*Event, error)               { return &Event{}, nil }
+func (c *capableProvider) ParseWebhook([]byte, string) (*Event, error) { return &Event{}, nil }
+
+func (c *capableProvider) ParseWebhookWithHeaders([]byte, map[string]string) (*Event, error) {
+	return &Event{}, nil
+}
 func (c *capableProvider) CancelSubscription(context.Context, string, bool) error    { return nil }
 func (c *capableProvider) PortalURL(context.Context, string, string) (string, error) { return "", nil }
 func (c *capableProvider) Refund(context.Context, Refund) (RefundResult, error) {

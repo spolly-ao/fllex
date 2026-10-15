@@ -36,9 +36,13 @@ func (p *Provider) Client() *Client { return p.client }
 // Name devolve "momenu".
 func (p *Provider) Name() string { return "momenu" }
 
-// Methods são os três métodos que o MoMenu cobra.
+// Methods são os dois métodos que o MoMenu cobra.
+//
+// Eram três. O eKwanza saiu porque o endpoint de pagamento dele deixou de
+// existir na API do MoMenu: anunciá-lo punha o checkout a oferecer um botão que
+// responde 404.
 func (p *Provider) Methods() []payment.Method {
-	return []payment.Method{payment.MethodMCX, payment.MethodReference, payment.MethodEKwanza}
+	return []payment.Method{payment.MethodMCX, payment.MethodReference}
 }
 
 // SupportsCurrency: o MoMenu só processa kwanza.
@@ -63,8 +67,6 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 	switch req.Method {
 	case payment.MethodMCX:
 		return p.chargeMCX(ctx, req)
-	case payment.MethodEKwanza:
-		return p.chargeEKwanza(ctx, req)
 	case payment.MethodReference, "":
 		return p.chargeReference(ctx, req)
 	default:
@@ -78,9 +80,10 @@ func (p *Provider) chargeMCX(ctx context.Context, req payment.ChargeRequest) (pa
 			Amount:      amountOf(req.Amount),
 			PhoneNumber: req.Customer.Phone,
 		},
-		Products: p.products(req),
-		Customer: p.customer(req),
-	})
+		Products:          p.products(req),
+		Customer:          p.customer(req),
+		ExternalReference: referenciaDe(req),
+	}, idempotenciaDe(req))
 	if err != nil {
 		return payment.ChargeResult{}, err
 	}
@@ -91,61 +94,42 @@ func (p *Provider) chargeMCX(ctx context.Context, req payment.ChargeRequest) (pa
 		Kind:        payment.KindPaid,
 		Status:      payment.StatusApproved,
 		ProviderRef: res.TransactionID,
+		StatusRef:   res.TransactionID,
 		InvoiceURL:  res.InvoiceURL,
+		// O `Reference` do resultado é a referência bancária, e no Multicaixa
+		// Express não existe nenhuma. A nossa vai no Raw, que é onde quem
+		// correlaciona a vai buscar.
+		Raw: map[string]any{"externalReference": res.ExternalReference},
 	}, nil
-}
-
-func (p *Provider) chargeEKwanza(ctx context.Context, req payment.ChargeRequest) (payment.ChargeResult, error) {
-	res, err := p.client.InitEKwanza(ctx, EKwanzaRequest{
-		PaymentInfo: PaymentInfo{
-			Amount:      amountOf(req.Amount),
-			PhoneNumber: req.Customer.Phone,
-		},
-		Products: p.products(req),
-		Customer: p.customer(req),
-	})
-	if err != nil {
-		return payment.ChargeResult{}, err
-	}
-	out := payment.ChargeResult{
-		Kind:        payment.KindCode,
-		Status:      payment.StatusPending,
-		ProviderRef: res.MerchantTransactionID,
-		// A consulta de estado do eKwanza é feita pelo código, não pelo id da
-		// transacção.
-		StatusRef: res.Code,
-		Code:      res.Code,
-		QRCode:    res.QRCode,
-	}
-	if res.PaymentTimeout > 0 {
-		exp := time.Now().UTC().Add(time.Duration(res.PaymentTimeout) * time.Second)
-		out.ExpiresAt = &exp
-	} else if t, ok := parseDate(res.ExpirationDate); ok {
-		out.ExpiresAt = &t
-	}
-	return out, nil
 }
 
 func (p *Provider) chargeReference(ctx context.Context, req payment.ChargeRequest) (payment.ChargeResult, error) {
 	res, err := p.client.CreateReference(ctx, ReferenceRequest{
-		PaymentInfo: PaymentInfo{Amount: amountOf(req.Amount)},
-		Products:    p.products(req),
-		Customer:    p.customer(req),
-	})
+		PaymentInfo:       PaymentInfo{Amount: amountOf(req.Amount)},
+		Products:          p.products(req),
+		Customer:          p.customer(req),
+		ExternalReference: referenciaDe(req),
+	}, idempotenciaDe(req))
 	if err != nil {
 		return payment.ChargeResult{}, err
 	}
 	out := payment.ChargeResult{
 		Kind:   payment.KindReference,
 		Status: payment.StatusPending,
-		// O webhook correlaciona pelo id da transacção e a consulta de estado
-		// usa o id da operação. Guardar os dois separados evita a troca que
-		// devolve sempre "não encontrado".
-		ProviderRef: httpxFirst(res.TransactionID, res.OperationID),
-		StatusRef:   httpxFirst(res.OperationID, res.TransactionID),
-		Entity:      res.Entity,
-		Reference:   res.ReferenceNumber,
-		DueDate:     res.DueDate,
+		// Os dois guardam o transactionId, e é essa a correcção: a consulta de
+		// estado passou a ser por ele, e não pelo operationId. Enquanto o
+		// StatusRef levou o operationId, a consulta devolvia "não encontrado" e
+		// nenhuma referência paga chegava a fechar.
+		ProviderRef: res.TransactionID,
+		StatusRef:   res.TransactionID,
+		// `Reference` é a referência bancária, a que o cliente escreve no ATM.
+		Reference: res.ReferenceNumber,
+		Entity:    res.Entity,
+		DueDate:   res.DueDate,
+		Raw:       map[string]any{"operationId": res.OperationID},
+	}
+	if ref := httpxFirst(res.ExternalReference, req.Reference); ref != "" {
+		out.Raw["externalReference"] = ref
 	}
 	if t, ok := parseDate(res.DueDate); ok {
 		out.ExpiresAt = &t
@@ -153,57 +137,110 @@ func (p *Provider) chargeReference(ctx context.Context, req payment.ChargeReques
 	return out, nil
 }
 
-// VerifyCharge consulta o estado de uma referência ou de um eKwanza.
+// VerifyCharge consulta o estado no MoMenu.
 //
-// É a confirmação de que se pode depender: o webhook do MoMenu não é assinado
-// nem reentregue, por isso mesmo quando ele chega o estado é reconfirmado por
-// aqui antes de se dar seja o que for por pago.
+// É a confirmação de que se pode depender, e passou a ser mais do que isso: a
+// consulta é uma só para todos os métodos e é **pelo transactionId**. A forma
+// antiga lia o estado de dentro de um objecto `payment` que já não existe, e o
+// resultado era pendente para sempre, sem erro nenhum pelo caminho.
 func (p *Provider) VerifyCharge(ctx context.Context, statusRef, merchantRef string) (payment.ChargeStatus, error) {
 	if !p.Configured() {
 		return payment.ChargeStatus{}, payment.ErrNotConfigured
 	}
-	if strings.TrimSpace(statusRef) == "" {
+	ref := strings.TrimSpace(statusRef)
+	if ref == "" {
+		ref = strings.TrimSpace(merchantRef)
+	}
+	if ref == "" {
 		return payment.ChargeStatus{}, nil
 	}
-	res, err := p.client.ReferenceStatus(ctx, statusRef, merchantRef)
+
+	res, err := p.client.Status(ctx, ref)
 	if err != nil {
 		return payment.ChargeStatus{}, err
 	}
+
 	st := payment.ChargeStatus{Status: payment.StatusPending, InvoiceURL: res.InvoiceURL}
-	if res.Payment != nil {
-		if s := payment.ParseStatus(res.Payment.Status); s != "" {
-			st.Status = s
-		}
+	if s := payment.ParseStatus(res.Status); s != "" {
+		st.Status = s
 	}
 	st.Paid = st.Status == payment.StatusApproved
+	if res.Amount > 0 {
+		v := money.FromFloat(res.Amount, money.AOA)
+		st.Amount = &v
+	}
 	if st.Paid {
-		now := time.Now().UTC()
-		st.PaidAt = &now
+		if t, ok := parseDate(res.PaidAt); ok {
+			st.PaidAt = &t
+		} else {
+			agora := time.Now().UTC()
+			st.PaidAt = &agora
+		}
 	}
 	return st, nil
 }
 
-// ParseWebhook lê o corpo que o MoMenu envia.
+// ParseWebhook existe para cumprir o [payment.WebhookParser] e **recusa sempre**.
 //
-// A entrega não é assinada, por isso o evento devolvido serve apenas para
-// acordar a confirmação: trate-o como "vale a pena ir verificar" e nunca como
-// prova de pagamento. É por isso que o estado devolvido é sempre pendente.
-func (p *Provider) ParseWebhook(payload []byte, _ string) (*payment.Event, error) {
+// A assinatura do MoMenu está partida por dois cabeçalhos, e aqui só chega um
+// deles. Sem o carimbo não se calcula o HMAC, e sem HMAC não há como distinguir
+// um evento do MoMenu de um POST que qualquer pessoa consiga fazer ao nosso
+// endereço. Devolver um evento "pendente" como se fosse inofensivo foi o que
+// esta integração fez durante meses: use o
+// [Provider.ParseWebhookWithHeaders].
+func (p *Provider) ParseWebhook(_ []byte, _ string) (*payment.Event, error) {
+	return nil, payment.ErrBadSignature
+}
+
+// ParseWebhookWithHeaders valida a assinatura e traduz o evento.
+//
+// **A assinatura verifica-se primeiro, e nada do corpo é olhado antes disso.**
+// É a referência que torna isto crítico: é o webhook que a marca como paga, por
+// isso um webhook aceite sem verificação é uma forma de marcar pagamentos como
+// pagos.
+//
+// O desfecho sai do `operationStatus` e nunca do `event`, porque o MoMenu envia
+// os estados que não são de sucesso **sem o campo `event`**. Uma condição que
+// exigisse os dois deixava passar em silêncio todos os cancelamentos e todas as
+// recusas, que é o que acontecia.
+func (p *Provider) ParseWebhookWithHeaders(payload []byte, headers map[string]string) (*payment.Event, error) {
+	cfg := p.client.Config()
+	if !assinaturaValida(
+		cfg.WebhookSecret, payload,
+		cabecalho(headers, cabecalhoAssinatura),
+		cabecalho(headers, cabecalhoCarimbo),
+		cfg.WebhookTolerance, p.client.agora(),
+	) {
+		return nil, payment.ErrBadSignature
+	}
+
 	var ev WebhookEvent
 	if err := unmarshal(payload, &ev); err != nil {
 		return &payment.Event{Type: payment.EventNone, Provider: p.Name()}, nil
 	}
+
 	out := &payment.Event{
 		Provider:   p.Name(),
 		ChargeRef:  httpxFirst(ev.MerchantTransactionID, ev.EkwanzaTransactionID),
-		Reference:  ev.MerchantTransactionID,
+		Reference:  httpxFirst(ev.ExternalReference, ev.MerchantTransactionID),
 		InvoiceURL: ev.InvoiceURL,
-		Status:     payment.StatusPending,
+		Raw:        map[string]any{"operationStatus": ev.OperationStatus},
 	}
-	if ev.Event == "payment.confirmed" && ev.OperationStatus == "1" {
-		out.Type = payment.EventChargeSucceeded
-	} else {
-		out.Type = payment.EventNone
+	if ev.Event != "" {
+		out.Raw["event"] = ev.Event
+	}
+
+	switch strings.TrimSpace(ev.OperationStatus) {
+	case "1":
+		out.Type, out.Status = payment.EventChargeSucceeded, payment.StatusApproved
+	case "3":
+		// Cancelado ou expirado. Era ignorado, e a cobrança ficava a ocupar a
+		// fila de consultas até a expiração a apanhar.
+		out.Type, out.Status = payment.EventChargeExpired, payment.StatusExpired
+	case "4", "5":
+		out.Type, out.Status = payment.EventChargeFailed, payment.StatusRejected
+	default:
+		out.Type, out.Status = payment.EventNone, payment.StatusPending
 	}
 	return out, nil
 }
@@ -278,4 +315,26 @@ func parseDate(s string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// referenciaDe devolve a nossa referência, cortada ao que o MoMenu aceita.
+//
+// O campo deles tem um limite de 200 caracteres. Passar mais não dá um erro
+// claro, dá um INVALID_PARAMETERS no meio de uma cobrança.
+func referenciaDe(req payment.ChargeRequest) string {
+	ref := strings.TrimSpace(req.Reference)
+	if len(ref) > 200 {
+		return ref[:200]
+	}
+	return ref
+}
+
+// idempotenciaDe devolve a chave de idempotência a enviar.
+//
+// Usa-se a nossa referência, que é única por cobrança: é exactamente o que uma
+// chave de idempotência tem de ser, e evita inventar um segundo identificador
+// para dizer o mesmo. Sem referência não vai chave, e aí repetir emite outra
+// cobrança, que é o comportamento antigo.
+func idempotenciaDe(req payment.ChargeRequest) string {
+	return referenciaDe(req)
 }

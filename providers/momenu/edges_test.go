@@ -24,9 +24,12 @@ func TestProviderAccessors(t *testing.T) {
 	if p.Client() != c {
 		t.Error("Client() devia devolver o cliente recebido")
 	}
+	// Dois, e não três: o endpoint de pagamento por eKwanza deixou de existir
+	// na API do MoMenu, e anunciá-lo punha o checkout a oferecer um botão que
+	// responde 404.
 	ms := p.Methods()
-	if len(ms) != 3 {
-		t.Errorf("métodos = %v, queria os três", ms)
+	if len(ms) != 2 {
+		t.Errorf("métodos = %v, queria dois", ms)
 	}
 	// A ordem é a que a página de pagamento mostra ao cliente.
 	if ms[0] != payment.MethodMCX {
@@ -52,107 +55,6 @@ func TestQAHeaderAndCustomTimeout(t *testing.T) {
 	}
 	if got != "true" {
 		t.Errorf("cabeçalho de ambiente de teste = %q", got)
-	}
-}
-
-func TestChargeEKwanza(t *testing.T) {
-	var body EKwanzaRequest
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		fmt.Fprint(w, `{"success":true,"merchantTransactionId":"tx-1","code":"EKZ123",
-			"qrCode":"data:image/png;base64,AAA","paymentTimeout":180}`)
-	}))
-	defer srv.Close()
-
-	p := New(Config{APIKey: "chave", BaseURL: srv.URL, Timeout: 5 * time.Second})
-	res, err := p.Charge(context.Background(), payment.ChargeRequest{
-		Amount: money.FromMajor(5900, money.AOA), Method: payment.MethodEKwanza,
-		Description: "Plano", Customer: payment.Customer{Phone: "921234567", TaxID: "5417"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Kind != payment.KindCode || res.Status != payment.StatusPending {
-		t.Errorf("resultado = %+v", res)
-	}
-	if res.Code != "EKZ123" || res.QRCode == "" {
-		t.Errorf("código e QR = %q, %q", res.Code, res.QRCode)
-	}
-	// O estado consulta-se pelo código, não pelo identificador da transacção.
-	if res.StatusRef != "EKZ123" {
-		t.Errorf("referência de consulta = %q", res.StatusRef)
-	}
-	if res.ExpiresAt == nil {
-		t.Error("o prazo devia vir do tempo limite da resposta")
-	}
-	// Ao contrário do Multicaixa Express, um telemóvel mal escrito não bloqueia
-	// o eKwanza: a confirmação é por QR.
-	if body.PaymentInfo.PhoneNumber != "244921234567" {
-		t.Errorf("telemóvel = %q", body.PaymentInfo.PhoneNumber)
-	}
-}
-
-func TestEKwanzaExpiryFromDate(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":true,"merchantTransactionId":"tx-1","code":"EKZ1",
-			"expirationDate":"2026-04-05T10:00:00Z"}`)
-	}))
-	defer srv.Close()
-
-	p := New(Config{APIKey: "chave", BaseURL: srv.URL, Timeout: 5 * time.Second})
-	res, err := p.Charge(context.Background(), payment.ChargeRequest{
-		Amount: money.FromMajor(100, money.AOA), Method: payment.MethodEKwanza,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.ExpiresAt == nil || res.ExpiresAt.Year() != 2026 {
-		t.Errorf("prazo = %v", res.ExpiresAt)
-	}
-}
-
-func TestEKwanzaRefusal(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":false}`)
-	}))
-	defer srv.Close()
-
-	p := New(Config{APIKey: "chave", BaseURL: srv.URL, Timeout: 5 * time.Second})
-	_, err := p.Charge(context.Background(), payment.ChargeRequest{
-		Amount: money.FromMajor(100, money.AOA), Method: payment.MethodEKwanza,
-	})
-	if err == nil {
-		t.Error("uma resposta sem sucesso devia dar erro")
-	}
-}
-
-func TestEKwanzaStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("merchantTransactionId"); got != "tx-1" {
-			t.Errorf("identificador da ordem = %q", got)
-		}
-		fmt.Fprint(w, `{"success":true,"status":"paid","invoiceUrl":"https://f/1"}`)
-	}))
-	defer srv.Close()
-
-	c := NewClient(Config{APIKey: "chave", BaseURL: srv.URL, Timeout: 5 * time.Second})
-	st, err := c.EKwanzaStatus(context.Background(), "EKZ1", "tx-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.Status != "paid" || st.InvoiceURL == "" {
-		t.Errorf("estado = %+v", st)
-	}
-
-	// E o caminho de erro.
-	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprint(w, `{"message":"código inválido"}`)
-	}))
-	defer bad.Close()
-	c = NewClient(Config{APIKey: "chave", BaseURL: bad.URL, Timeout: 5 * time.Second})
-	if _, err := c.EKwanzaStatus(context.Background(), "EKZ1", ""); err == nil {
-		t.Error("queria erro")
 	}
 }
 
@@ -217,7 +119,7 @@ func TestVerifyChargeErrorAndUnknownStatus(t *testing.T) {
 	// Um estado que o gateway devolva e nós não conheçamos fica pendente, que
 	// é o seguro: dar por pago o que não se percebeu é o erro caro.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `{"success":true,"payment":{"status":"em análise"}}`)
+		fmt.Fprint(w, `{"success":true,"status":"em análise"}`)
 	}))
 	defer srv.Close()
 	p := New(Config{APIKey: "chave", BaseURL: srv.URL, Timeout: 5 * time.Second})
@@ -305,22 +207,6 @@ func TestParseDateVariants(t *testing.T) {
 		if _, ok := parseDate(in); ok {
 			t.Errorf("não devia ler %q", in)
 		}
-	}
-}
-
-func TestWebhookIgnoresUninterestingEvents(t *testing.T) {
-	p := New(Config{APIKey: "chave"})
-	ev, err := p.ParseWebhook([]byte(`{"event":"invoice.created","merchantTransactionId":"tx-1"}`), "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ev.Ignorable() {
-		t.Errorf("tipo = %s, queria ignorável", ev.Type)
-	}
-	// Confirmação com estado que não é o de sucesso também se ignora.
-	ev, _ = p.ParseWebhook([]byte(`{"event":"payment.confirmed","operationStatus":"0"}`), "")
-	if !ev.Ignorable() {
-		t.Errorf("tipo = %s", ev.Type)
 	}
 }
 
@@ -606,13 +492,10 @@ func TestClientNetworkErrors(t *testing.T) {
 
 	if _, err := c.InitMCX(ctx, MCXRequest{
 		PaymentInfo: PaymentInfo{Amount: 100, PhoneNumber: "921234567"},
-	}); err == nil {
+	}, ""); err == nil {
 		t.Error("queria erro de rede no Multicaixa Express")
 	}
-	if _, err := c.InitEKwanza(ctx, EKwanzaRequest{PaymentInfo: PaymentInfo{Amount: 100}}); err == nil {
-		t.Error("queria erro de rede no eKwanza")
-	}
-	if _, err := c.CreateReference(ctx, ReferenceRequest{PaymentInfo: PaymentInfo{Amount: 100}}); err == nil {
+	if _, err := c.CreateReference(ctx, ReferenceRequest{PaymentInfo: PaymentInfo{Amount: 100}}, ""); err == nil {
 		t.Error("queria erro de rede na referência")
 	}
 }
