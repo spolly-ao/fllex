@@ -13,6 +13,9 @@ import (
 // config é a de um comerciante do BAI PAGA. A chave de HMAC é tão obrigatória
 // como a de API: sem ela não se aceita a confirmação, e o cliente paga sem que
 // a cobrança feche.
+// A HMACKey é a chave de exemplo que o próprio BAI publica no documento de
+// integração, com a mensagem e a assinatura que ela produz. Não é credencial de
+// ninguém.
 var configBAI = baipaga.Config{
 	APIKey:      "chave-do-comerciante",
 	HMACKey:     "BancoBAI12345678",

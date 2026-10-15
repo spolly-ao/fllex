@@ -17,6 +17,12 @@ import (
 	"github.com/spolly-ao/fllex/payment"
 )
 
+// chaveHMAC é a chave de exemplo que o **próprio BAI publica** no documento de
+// integração, ao lado da mensagem e da assinatura que ela produz. Não é uma
+// credencial de ninguém: é o vector oficial, e está aqui por isso.
+//
+// Fica dito porque uma string com este aspecto num repositório público faz um
+// leitor (ou um detector de segredos) parar, e deve fazer.
 const chaveHMAC = "BancoBAI12345678"
 
 // servidor devolve um BAI de mentira que grava o corpo e o caminho recebidos.
