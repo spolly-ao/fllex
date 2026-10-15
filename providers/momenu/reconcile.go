@@ -1,3 +1,7 @@
+// A reconciliação de facturas **só funciona em contas Pro**: a listagem de
+// facturas responde 403 nas outras. Verificado contra a produção a 2026-10-15.
+// Numa conta sem Pro, a rede de segurança do Multicaixa Express é a chave de
+// idempotência que o MoMenu passou a aceitar, e não isto.
 package momenu
 
 import (

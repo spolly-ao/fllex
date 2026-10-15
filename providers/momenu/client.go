@@ -166,6 +166,12 @@ func (c *Client) Status(ctx context.Context, transactionID string) (*StatusRespo
 
 // ListInvoices devolve uma página de facturas emitidas.
 //
+// **Exige conta Pro.** Numa conta normal responde 403 com "Esta funcionalidade
+// requer uma conta Pro", o que quer dizer que a reconciliação do Multicaixa
+// Express de [Reconciler] não funciona lá. Verificado contra a produção a
+// 2026-10-15. Nessas contas a rede de segurança do Multicaixa Express é a chave
+// de idempotência, e não as facturas.
+//
 // É a base da reconciliação do Multicaixa Express: como esse método não tem
 // webhook de criação, uma factura que exista
 // para o telemóvel e o valor que pedimos, dentro da janela de tempo certa, é a
