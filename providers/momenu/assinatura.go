@@ -21,15 +21,34 @@ const (
 
 // toleranciaPorOmissao é a janela em que um carimbo é aceite.
 //
-// O MoMenu não documenta o espaçamento das reentregas (diz só que repete até
-// três vezes, com dez segundos de prazo por tentativa), por isso a janela é
-// generosa de propósito: apertá-la sem saber o espaçamento recusaria a terceira
-// tentativa de um evento legítimo.
+// Cinco minutos, que é o que o próprio MoMenu sugere: "rejeitem pedidos com
+// timestamp fora da vossa janela de aceitação (por exemplo, mais de 5
+// minutos)". Esta constante esteve nos quinze, com um comentário a dizer que a
+// documentação não indicava janela nenhuma. Indicava.
 //
-// A janela não é a defesa principal contra reenvios. A defesa é deduplicar pelo
-// identificador do evento, do lado de quem o recebe. O carimbo serve para que
-// um evento capturado hoje não valha para sempre.
-const toleranciaPorOmissao = 15 * time.Minute
+// A janela não é a defesa principal contra reenvios. A entrega é at-least-once
+// e o próprio gateway manda deduplicar pelo `merchantTransactionId`, que é o
+// que vai no [payment.Event.ID]. O carimbo serve para que um evento capturado
+// hoje não valha para sempre.
+const toleranciaPorOmissao = 5 * time.Minute
+
+// segredoConfere valida o cabeçalho que traz o segredo em claro.
+//
+// O MoMenu envia-o quando a conta **não** tem a opção "Assinatura apenas", e a
+// documentação é explícita sobre o que fazer com ele: "validem por comparação
+// exacta (em tempo constante quando a linguagem o permitir) e rejeitem pedidos
+// sem correspondência".
+//
+// Ausente é aceitável, e é o caso recomendado: com "Assinatura apenas" o
+// segredo nunca viaja no pedido, e a assinatura é a única prova. Presente e
+// diferente não é: uma entrega que traz o segredo de outra conta não é uma
+// entrega nossa, mesmo que a assinatura por acaso verifique.
+func segredoConfere(nosso, recebido string) bool {
+	if recebido == "" {
+		return true
+	}
+	return hmac.Equal([]byte(recebido), []byte(nosso))
+}
 
 // assinaturaValida indica se o corpo foi assinado com o nosso segredo.
 //
@@ -40,10 +59,13 @@ const toleranciaPorOmissao = 15 * time.Minute
 //
 // A comparação é em tempo constante. Um `==` sobre a assinatura sai no primeiro
 // byte diferente, e essa diferença de tempo mede-se de fora.
-func assinaturaValida(segredo string, corpo []byte, assinatura, carimbo string, tolerancia time.Duration, agora time.Time) bool {
+func assinaturaValida(segredo string, corpo []byte, assinatura, carimbo, segredoRecebido string, tolerancia time.Duration, agora time.Time) bool {
 	assinatura = strings.TrimSpace(assinatura)
 	carimbo = strings.TrimSpace(carimbo)
 	if segredo == "" || assinatura == "" || carimbo == "" {
+		return false
+	}
+	if !segredoConfere(segredo, strings.TrimSpace(segredoRecebido)) {
 		return false
 	}
 	if !carimboFresco(carimbo, tolerancia, agora) {

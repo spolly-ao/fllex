@@ -209,6 +209,7 @@ func (p *Provider) ParseWebhookWithHeaders(payload []byte, headers map[string]st
 		cfg.WebhookSecret, payload,
 		cabecalho(headers, cabecalhoAssinatura),
 		cabecalho(headers, cabecalhoCarimbo),
+		cabecalho(headers, cabecalhoSegredo),
 		cfg.WebhookTolerance, p.client.agora(),
 	) {
 		return nil, payment.ErrBadSignature
@@ -220,7 +221,13 @@ func (p *Provider) ParseWebhookWithHeaders(payload []byte, headers map[string]st
 	}
 
 	out := &payment.Event{
-		Provider:   p.Name(),
+		Provider: p.Name(),
+		// É pelo `merchantTransactionId` que se deduplicam as reentregas, e é
+		// o próprio gateway que o manda: a entrega é at-least-once e "um
+		// segundo payment.confirmed para o mesmo identificador" tem de ser
+		// inofensivo. Sem isto preenchido, quem recebe não tem por onde
+		// deduplicar.
+		ID:         ev.MerchantTransactionID,
 		ChargeRef:  httpxFirst(ev.MerchantTransactionID, ev.EkwanzaTransactionID),
 		Reference:  httpxFirst(ev.ExternalReference, ev.MerchantTransactionID),
 		InvoiceURL: ev.InvoiceURL,

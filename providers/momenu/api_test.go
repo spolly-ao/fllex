@@ -119,8 +119,9 @@ func TestWebhookSemSegredoConfiguradoNaoAceitaNada(t *testing.T) {
 func TestOCarimboTemDeEstarDentroDaJanela(t *testing.T) {
 	p := New(Config{APIKey: "c", WebhookSecret: segredoWebhook, Now: func() time.Time { return fixo }})
 
-	// Dentro da janela, nos dois sentidos.
-	for _, desvio := range []time.Duration{0, -10 * time.Minute, 10 * time.Minute} {
+	// Dentro da janela, nos dois sentidos. Cinco minutos, que é o que o MoMenu
+	// sugere na documentação.
+	for _, desvio := range []time.Duration{0, -4 * time.Minute, 4 * time.Minute} {
 		corpo, h := assina(`{"operationStatus":"1"}`, fixo.Add(desvio))
 		if _, err := p.ParseWebhookWithHeaders([]byte(corpo), h); err != nil {
 			t.Errorf("desvio de %v devia passar: %v", desvio, err)
@@ -128,7 +129,7 @@ func TestOCarimboTemDeEstarDentroDaJanela(t *testing.T) {
 	}
 	// Fora da janela, nos dois sentidos. O futuro também se recusa: um evento
 	// assinado hoje não pode valer dentro de um ano.
-	for _, desvio := range []time.Duration{-time.Hour, time.Hour} {
+	for _, desvio := range []time.Duration{-10 * time.Minute, 10 * time.Minute} {
 		corpo, h := assina(`{"operationStatus":"1"}`, fixo.Add(desvio))
 		if _, err := p.ParseWebhookWithHeaders([]byte(corpo), h); !errors.Is(err, payment.ErrBadSignature) {
 			t.Errorf("desvio de %v devia ser recusado", desvio)
@@ -139,9 +140,9 @@ func TestOCarimboTemDeEstarDentroDaJanela(t *testing.T) {
 		APIKey: "c", WebhookSecret: segredoWebhook,
 		WebhookTolerance: time.Minute, Now: func() time.Time { return fixo },
 	})
-	corpo, h := assina(`{"operationStatus":"1"}`, fixo.Add(-10*time.Minute))
+	corpo, h := assina(`{"operationStatus":"1"}`, fixo.Add(-3*time.Minute))
 	if _, err := apertado.ParseWebhookWithHeaders([]byte(corpo), h); err == nil {
-		t.Error("com janela de um minuto, dez minutos devia ser recusado")
+		t.Error("com janela de um minuto, três minutos devia ser recusado")
 	}
 }
 
@@ -548,5 +549,56 @@ func TestAReferenciaGuardaANossaReferenciaQuandoExiste(t *testing.T) {
 	}
 	if res.ExpiresAt == nil {
 		t.Error("a validade devia ter sido lida")
+	}
+}
+
+func TestOSegredoEmClaroEValidadoQuandoVem(t *testing.T) {
+	// O MoMenu envia o segredo em claro quando a conta não tem "Assinatura
+	// apenas", e a documentação é explícita: "validem por comparação exacta
+	// (em tempo constante quando a linguagem o permitir) e rejeitem pedidos sem
+	// correspondência". A implementação ignorava-o.
+	p := New(Config{APIKey: "c", WebhookSecret: segredoWebhook, Now: func() time.Time { return fixo }})
+	corpo, h := assina(`{"merchantTransactionId":"tx-1","operationStatus":"1"}`, fixo)
+
+	// Com o segredo certo, passa.
+	if _, err := p.ParseWebhookWithHeaders([]byte(corpo), h); err != nil {
+		t.Errorf("com o segredo certo: %v", err)
+	}
+
+	// Ausente também passa: é o caso recomendado, em que o segredo nunca viaja.
+	semSegredo := map[string]string{
+		cabecalhoAssinatura: h[cabecalhoAssinatura],
+		cabecalhoCarimbo:    h[cabecalhoCarimbo],
+	}
+	if _, err := p.ParseWebhookWithHeaders([]byte(corpo), semSegredo); err != nil {
+		t.Errorf("sem o cabeçalho do segredo: %v", err)
+	}
+
+	// Com o segredo de outra conta, não passa, mesmo com a assinatura boa: uma
+	// entrega que traz o segredo de outrem não é uma entrega nossa.
+	deOutrem := map[string]string{
+		cabecalhoAssinatura: h[cabecalhoAssinatura],
+		cabecalhoCarimbo:    h[cabecalhoCarimbo],
+		cabecalhoSegredo:    "o-segredo-de-outra-conta",
+	}
+	if _, err := p.ParseWebhookWithHeaders([]byte(corpo), deOutrem); !errors.Is(err, payment.ErrBadSignature) {
+		t.Errorf("com o segredo de outrem = %v, queria recusa", err)
+	}
+}
+
+func TestOEventoTrazOIdentificadorDeDeduplicacao(t *testing.T) {
+	// A entrega é at-least-once e o gateway manda deduplicar pelo
+	// merchantTransactionId: "um segundo payment.confirmed para o mesmo
+	// identificador" tem de ser inofensivo. Sem o Event.ID preenchido, quem
+	// recebe não tem por onde deduplicar.
+	p := New(Config{APIKey: "c", WebhookSecret: segredoWebhook, Now: func() time.Time { return fixo }})
+	corpo, h := assina(`{"event":"payment.confirmed","merchantTransactionId":"tx-77","operationStatus":"1"}`, fixo)
+
+	ev, err := p.ParseWebhookWithHeaders([]byte(corpo), h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.ID != "tx-77" {
+		t.Errorf("identificador do evento = %q, queria tx-77", ev.ID)
 	}
 }
