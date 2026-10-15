@@ -20,6 +20,15 @@ const (
 	// (webhook ou consulta de estado).
 	MethodEKwanza Method = "ekwanza"
 
+	// MethodBAIPaga é o BAI PAGA: o cliente é identificado pelo telemóvel e
+	// autoriza o débito na conta dele, com OTP no BAI Directo.
+	//
+	// Tem nome de rede, como o eKwanza, e é de propósito: não é uma carteira
+	// pré-paga nem uma referência, é um débito autorizado numa conta à ordem, e
+	// nenhum dos outros códigos descreve isso. Quem paga escolhe "BAI PAGA" no
+	// ecrã, e é esse o nome que tem de chegar ao código.
+	MethodBAIPaga Method = "baipaga"
+
 	// MethodReference é a referência bancária diferida (entidade + referência +
 	// validade), paga ao multibanco, no ATM ou na app do banco.
 	MethodReference Method = "reference"
@@ -51,7 +60,7 @@ const (
 // AllMethods são todos os métodos conhecidos, na ordem em que fazem sentido
 // para um cliente escolher.
 var AllMethods = []Method{
-	MethodMCX, MethodReference, MethodEKwanza, MethodCard,
+	MethodMCX, MethodReference, MethodBAIPaga, MethodEKwanza, MethodCard,
 	MethodDirectDebit, MethodWallet, MethodExternal, MethodManual,
 }
 
@@ -68,6 +77,8 @@ func ParseMethod(s string) Method {
 		return MethodMCX
 	case "ekwanza", "e-kwanza", "ekz":
 		return MethodEKwanza
+	case "baipaga", "bai_paga", "bai-paga", "bai", "baidirecto":
+		return MethodBAIPaga
 	case "reference", "referencia", "referência", "ref", "atm", "proxypay":
 		return MethodReference
 	case "direct_debit", "directdebit", "debito_directo", "débito_directo", "dd", "dds":
@@ -117,7 +128,8 @@ func (m Method) Recurring() bool {
 // síncrono nem automático). Os métodos diferidos precisam de confirmação por
 // consulta de estado ou webhook, e de um prazo de validade.
 func (m Method) Deferred() bool {
-	return m == MethodReference || m == MethodEKwanza || m == MethodExternal
+	return m == MethodReference || m == MethodEKwanza || m == MethodExternal ||
+		m == MethodBAIPaga
 }
 
 // Instant indica se o desfecho do pagamento é conhecido na própria chamada.

@@ -62,6 +62,26 @@ func FormatAODDS(s string) string {
 	return "+" + countryCodeAO + "-" + d[3:]
 }
 
+// LocalAO devolve o número na forma local de nove dígitos ("925857412"), que é
+// o formato que o BAI PAGA espera no campo customerMsisdn.
+//
+// É a terceira forma de escrever o mesmo número, depois do 244XXXXXXXXX do
+// Multicaixa Express e do +244-XXXXXXXXX do Proxypay DDS. Cada rede escolheu a
+// sua, e é por isso que estas funções vivem aqui e não dentro de cada provider:
+// um número mal formatado é recusado pelo gateway com um erro que não diz que o
+// problema é de formato.
+//
+// Um número que não seja angolano válido devolve string vazia, como o
+// [FormatAODDS], porque enviar lixo faz o pedido falhar mais à frente e com uma
+// mensagem pior.
+func LocalAO(s string) string {
+	d, err := CheckAO(s)
+	if err != nil {
+		return ""
+	}
+	return d[len(countryCodeAO):]
+}
+
 // Digits devolve apenas os dígitos da string.
 func Digits(s string) string {
 	var b strings.Builder

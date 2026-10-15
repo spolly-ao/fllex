@@ -242,3 +242,27 @@ func TestIsRetryable(t *testing.T) {
 		t.Error("uma falha de rede vale a pena repetir")
 	}
 }
+
+func TestMethodBAIPaga(t *testing.T) {
+	// O BAI PAGA tem nome de rede, como o eKwanza, e é lido pelas grafias que
+	// aparecem em esquemas antigos e em formulários.
+	for _, entrada := range []string{"baipaga", "BAI_PAGA", " bai-paga ", "bai", "baidirecto"} {
+		if got := ParseMethod(entrada); got != MethodBAIPaga {
+			t.Errorf("ParseMethod(%q) = %q", entrada, got)
+		}
+	}
+	if !MethodBAIPaga.Valid() {
+		t.Error("o BAI PAGA tem de ser um método conhecido")
+	}
+	// É diferido: o cliente conclui mais tarde, e por isso precisa de
+	// confirmação por consulta ou webhook e de um prazo.
+	if !MethodBAIPaga.Deferred() {
+		t.Error("o BAI PAGA é diferido")
+	}
+	if MethodBAIPaga.Instant() || MethodBAIPaga.Recurring() {
+		t.Error("o BAI PAGA não é instantâneo nem recorrente")
+	}
+	if !MethodBAIPaga.SelfService() {
+		t.Error("um cliente pode escolher BAI PAGA sozinho")
+	}
+}

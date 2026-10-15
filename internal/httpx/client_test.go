@@ -2,10 +2,18 @@ package httpx
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -452,4 +460,104 @@ func decodeJSON(r io.Reader, v any) error {
 		return err
 	}
 	return json.Unmarshal(b, v)
+}
+
+// parDeEnsaio gera um certificado auto-assinado e a chave dele, em PEM.
+//
+// Gerado no teste e não guardado em ficheiro: um certificado no repositório é
+// um certificado que expira sem ninguém dar por isso, e de nada serve versionar
+// um par que só existe para provar um aperto de mão.
+func parDeEnsaio(t *testing.T) (certPEM, keyPEM []byte, cert *x509.Certificate) {
+	t.Helper()
+	chave, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelo := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "fllex-ensaio"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, modelo, modelo, &chave.PublicKey, chave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytesChave, err := x509.MarshalECPrivateKey(chave)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err = x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}),
+		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: bytesChave}),
+		cert
+}
+
+func TestCertificadoDeClienteAbreAPortaEASuaFaltaFechaA(t *testing.T) {
+	// É o que o BAI PAGA exige: a chave de API e a lista de IPs não chegam,
+	// porque as credenciais vazam e um IP falsifica-se. O certificado é o que
+	// prova que a máquina que fala é a nossa.
+	certPEM, keyPEM, cert := parDeEnsaio(t)
+
+	confianca := x509.NewCertPool()
+	confianca.AddCert(cert)
+
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	srv.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: confianca}
+	srv.StartTLS()
+	defer srv.Close()
+
+	raizes := x509.NewCertPool()
+	raizes.AddCert(srv.Certificate())
+
+	// Com certificado, passa.
+	com := New("ensaio", srv.URL, 5*time.Second)
+	if err := com.ClientCert(certPEM, keyPEM); err != nil {
+		t.Fatalf("instalar o certificado: %v", err)
+	}
+	com.HTTP.Transport.(*http.Transport).TLSClientConfig.RootCAs = raizes
+	var out map[string]any
+	if err := com.Do(context.Background(), Request{Method: "GET", Path: "/", Out: &out}); err != nil {
+		t.Fatalf("com certificado devia passar: %v", err)
+	}
+	if out["ok"] != true {
+		t.Errorf("resposta = %v", out)
+	}
+
+	// Sem certificado, o servidor recusa o aperto de mão.
+	sem := New("ensaio", srv.URL, 5*time.Second)
+	sem.HTTP.Transport = &http.Transport{TLSClientConfig: &tls.Config{RootCAs: raizes}}
+	if err := sem.Do(context.Background(), Request{Method: "GET", Path: "/"}); err == nil {
+		t.Error("sem certificado o servidor tinha de recusar")
+	}
+}
+
+func TestUmCertificadoQueNaoCasaDaErroLogo(t *testing.T) {
+	c := New("ensaio", "https://exemplo.ao", time.Second)
+	err := c.ClientCert([]byte("não é um certificado"), []byte("nem uma chave"))
+	if err == nil {
+		t.Fatal("um par inválido tinha de dar erro")
+	}
+	if !strings.Contains(err.Error(), "certificado de cliente inválido") {
+		t.Errorf("erro = %v", err)
+	}
+
+	// Um cliente sem http.Client montado ganha um, em vez de rebentar.
+	certPEM, keyPEM, _ := parDeEnsaio(t)
+	vazio := &Client{Provider: "ensaio"}
+	if err := vazio.ClientCert(certPEM, keyPEM); err != nil {
+		t.Fatal(err)
+	}
+	if vazio.HTTP == nil || vazio.HTTP.Transport == nil {
+		t.Error("o transporte devia ter sido montado")
+	}
 }

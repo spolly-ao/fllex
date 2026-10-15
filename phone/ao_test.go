@@ -95,3 +95,20 @@ func TestDigits(t *testing.T) {
 		t.Errorf("= %q", got)
 	}
 }
+
+func TestLocalAO(t *testing.T) {
+	// O BAI PAGA quer os nove dígitos sem indicativo, que é a terceira forma de
+	// escrever o mesmo número nesta biblioteca.
+	for _, entrada := range []string{"925857412", "+244 925 857 412", "00244925857412", "244925857412"} {
+		if got := LocalAO(entrada); got != "925857412" {
+			t.Errorf("LocalAO(%q) = %q, queria 925857412", entrada, got)
+		}
+	}
+	// O que não é um telemóvel angolano válido devolve vazio, para não seguir
+	// lixo que o gateway recusa com uma mensagem pior.
+	for _, entrada := range []string{"", "12345", "244123456789", "abc"} {
+		if got := LocalAO(entrada); got != "" {
+			t.Errorf("LocalAO(%q) = %q, queria vazio", entrada, got)
+		}
+	}
+}

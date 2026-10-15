@@ -10,6 +10,7 @@ package httpx
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,6 +53,34 @@ func New(provider, baseURL string, timeout time.Duration) *Client {
 		MaxRetries: 2,
 		RetryWait:  500 * time.Millisecond,
 	}
+}
+
+// ClientCert instala um certificado de cliente, para os gateways que exigem
+// autenticação mútua.
+//
+// É o caso do BAI PAGA: a chave de API e a lista de IPs autorizados não chegam,
+// porque as credenciais vazam e um endereço IP falsifica-se, e o certificado é
+// o que prova que a máquina que está a falar é mesmo a nossa. Um certificado
+// comprometido comunica-se ao banco para revogação imediata, e é por isso que o
+// par entra aqui em memória e não fica escrito em disco nenhum.
+//
+// Os dois argumentos são o certificado e a chave privada em PEM. Um par que não
+// case devolve erro, e devolve-o no arranque em vez de na primeira cobrança.
+func (c *Client) ClientCert(certPEM, keyPEM []byte) error {
+	par, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return fmt.Errorf("%s: certificado de cliente inválido: %w", c.Provider, err)
+	}
+	if c.HTTP == nil {
+		c.HTTP = &http.Client{}
+	}
+	c.HTTP.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			Certificates: []tls.Certificate{par},
+			MinVersion:   tls.VersionTLS12,
+		},
+	}
+	return nil
 }
 
 // SetHeader define um cabeçalho aplicado a todos os pedidos.
