@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -371,5 +372,26 @@ func TestWaitSemPrazoEsperaAteAoFim(t *testing.T) {
 
 	if !r.Wait(0) {
 		t.Error("sem prazo, Wait espera o que for preciso e devolve true")
+	}
+}
+
+func TestUmaPassagemSemRegistoNaoRebenta(t *testing.T) {
+	// A guarda existe porque um Poller mal montado rebentava a passagem
+	// inteira, e com ela as cobranças que vinham a seguir. Fica coberta para
+	// que a mensagem não volte a dizer o nome do componente errado: até
+	// 2026-09-24 o Poller registava-se como "expirer:", e quem fosse ao registo
+	// à procura de uma falha da consulta encontrava-a com o nome da expiração.
+	var saida strings.Builder
+	log := slog.New(slog.NewTextHandler(&saida, nil))
+
+	(&Poller{Log: log}).Run(context.Background())
+	if !strings.Contains(saida.String(), "poller: Registry") {
+		t.Errorf("registo do poller = %q", saida.String())
+	}
+
+	saida.Reset()
+	(&Expirer{Log: log}).Run(context.Background())
+	if !strings.Contains(saida.String(), "expirer: Registry") {
+		t.Errorf("registo do expirer = %q", saida.String())
 	}
 }
