@@ -307,3 +307,30 @@ func TestWebhookSubscricaoComOFimDoPeriodoNosItens(t *testing.T) {
 		t.Errorf("fim do período = %v", ev.CurrentPeriodEnd)
 	}
 }
+
+func TestChargeCobraNaMoedaPedida(t *testing.T) {
+	var sessao url.Values
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		sessao = r.PostForm
+		fmt.Fprint(w, `{"id":"cs_1"}`)
+	})
+	defer done()
+	if _, err := p.Charge(context.Background(), payment.ChargeRequest{Amount: money.New(2500, "USD")}); err != nil {
+		t.Fatal(err)
+	}
+	if sessao.Get("adaptive_pricing[enabled]") != "false" {
+		t.Errorf("o preço adaptativo ficou ligado: %v", sessao)
+	}
+}
+
+func TestVerifyChargeDeUmaSessaoPagaTrazOValor(t *testing.T) {
+	p, done := provider(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":"cs_1","status":"complete","payment_status":"paid","amount_total":2500,"currency":"usd"}`)
+	})
+	defer done()
+	st, err := p.VerifyCharge(context.Background(), "cs_1", "")
+	if err != nil || st.Amount == nil || st.Amount.Minor != 2500 || st.Amount.Currency != "USD" {
+		t.Fatalf("= %+v, %v", st, err)
+	}
+}

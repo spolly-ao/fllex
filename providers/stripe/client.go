@@ -117,6 +117,8 @@ type CheckoutSession struct {
 	Customer      string `json:"customer"`
 	Subscription  string `json:"subscription"`
 	PaymentIntent string `json:"payment_intent"`
+	AmountTotal   int64  `json:"amount_total"`
+	Currency      string `json:"currency"`
 }
 
 // Paid indica se a sessão já foi paga.

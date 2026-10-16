@@ -105,6 +105,12 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 		form.Set("metadata["+k+"]", v)
 	}
 
+	// O preço adaptativo do Stripe mostra e cobra o preço convertido para a
+	// moeda do cliente. Quem chama regista a cobrança na moeda que pediu, e uma
+	// subscrição convertida renovava noutra moeda: as facturas dos ciclos
+	// deixavam de bater com o preço contratado. Cobra-se na moeda pedida, e a
+	// conversão, quando a houver, é decisão de quem chama.
+	form.Set("adaptive_pricing[enabled]", "false")
 	form.Set("line_items[0][quantity]", "1")
 	form.Set("line_items[0][price_data][currency]", strings.ToLower(req.Amount.Currency.String()))
 	form.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(req.Amount.Minor, 10))
@@ -215,6 +221,13 @@ func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payme
 		st.Paid = true
 		now := time.Now().UTC()
 		st.PaidAt = &now
+		if sess.Currency != "" {
+			// O valor que o Stripe cobrou, para quem confirma o comparar com o
+			// que pediu: uma sessão paga noutra moeda ou com outro valor não é
+			// a cobrança que se fez.
+			amt := money.New(sess.AmountTotal, money.NormalizeCurrency(sess.Currency))
+			st.Amount = &amt
+		}
 	case sess.Status == "expired":
 		st.Status = payment.StatusExpired
 	}
