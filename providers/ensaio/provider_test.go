@@ -3,6 +3,7 @@ package ensaio
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,52 @@ func TestOEnsaioAplicaOPrazoPedido(t *testing.T) {
 	for _, m := range []payment.Method{payment.MethodReference, payment.MethodMCX, payment.MethodBAIPaga} {
 		if !h.HonorsExpiry(m) {
 			t.Errorf("%s: o ensaio devolve o prazo pedido", m)
+		}
+	}
+}
+
+func TestEstornoDeEnsaio(t *testing.T) {
+	// Quem integra escreve o caminho do estorno contra o modo de teste antes de
+	// ter uma rede que estorne. O ensaio responde como uma: aprovado, com um
+	// identificador, e a mesma chave dá sempre o mesmo identificador.
+	var p payment.Refunder = New()
+	req := payment.Refund{ChargeRef: "pay_1", Amount: money.New(50000, money.AOA), IdempotencyKey: "re_1"}
+	a, err := p.Refund(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Status != payment.StatusApproved || !a.Amount.Equal(req.Amount) || !strings.HasPrefix(a.RefundRef, "re_ensaio_") {
+		t.Fatalf("estorno = %+v", a)
+	}
+	b, err := p.Refund(context.Background(), req)
+	if err != nil || b.RefundRef != a.RefundRef {
+		t.Fatalf("a mesma chave deu %q e %q (%v)", a.RefundRef, b.RefundRef, err)
+	}
+	req.IdempotencyKey = "re_2"
+	if c, _ := p.Refund(context.Background(), req); c.RefundRef == a.RefundRef {
+		t.Error("chaves diferentes deram o mesmo estorno")
+	}
+	// Sem chave, cada pedido é um estorno novo.
+	req.IdempotencyKey = ""
+	d, err := p.Refund(context.Background(), req)
+	if err != nil || d.RefundRef == "" || d.RefundRef == a.RefundRef {
+		t.Fatalf("sem chave = %+v (%v)", d, err)
+	}
+}
+
+func TestEstornoDeEnsaioRecusado(t *testing.T) {
+	p := New()
+	casos := map[string]struct {
+		req  payment.Refund
+		erro error
+	}{
+		"sem cobrança":   {payment.Refund{Amount: money.New(1, money.AOA)}, payment.ErrInvalidTransition},
+		"total":          {payment.Refund{ChargeRef: "pay_1"}, payment.ErrUnsupported},
+		"valor negativo": {payment.Refund{ChargeRef: "pay_1", Amount: money.New(-1, money.AOA)}, payment.ErrAmountNotPositive},
+	}
+	for nome, c := range casos {
+		if _, err := p.Refund(context.Background(), c.req); !errors.Is(err, c.erro) {
+			t.Errorf("%s: erro = %v, queria %v", nome, err, c.erro)
 		}
 	}
 }

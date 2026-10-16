@@ -183,8 +183,17 @@ type RefundResponse struct {
 }
 
 // RefundPaymentIntent devolve dinheiro de um pagamento. amountMinor a zero
-// devolve tudo.
+// devolve tudo. Sem chave de idempotência: ver [Client.RefundPaymentIntentOnce].
 func (c *Client) RefundPaymentIntent(ctx context.Context, paymentIntentID string, amountMinor int64, reason string) (*RefundResponse, error) {
+	return c.RefundPaymentIntentOnce(ctx, paymentIntentID, amountMinor, reason, "")
+}
+
+// RefundPaymentIntentOnce é o [Client.RefundPaymentIntent] com a chave de
+// idempotência do Stripe (o cabeçalho Idempotency-Key). Com ela, o Stripe
+// devolve o mesmo estorno a um pedido repetido, e por isso o cliente repete
+// sozinho as falhas passageiras (rede, 5xx, 429): um estorno cuja resposta se
+// perdeu não devolve o dinheiro duas vezes. Sem ela, nada se repete.
+func (c *Client) RefundPaymentIntentOnce(ctx context.Context, paymentIntentID string, amountMinor int64, reason, idempotencyKey string) (*RefundResponse, error) {
 	if strings.TrimSpace(paymentIntentID) == "" {
 		return nil, fmt.Errorf("stripe: o estorno exige um payment intent")
 	}
@@ -198,12 +207,37 @@ func (c *Client) RefundPaymentIntent(ctx context.Context, paymentIntentID string
 		// aceita três valores fixos do Stripe e recusa texto livre.
 		form.Set("metadata[reason]", reason)
 	}
+	req := httpx.Request{
+		Method: http.MethodPost, Path: "/v1/refunds", Form: form,
+		BasicAuth: c.cfg.SecretKey,
+	}
+	if k := strings.TrimSpace(idempotencyKey); k != "" {
+		req.Header = http.Header{"Idempotency-Key": {k}}
+		req.Idempotent = true
+	}
 	var out RefundResponse
-	if err := c.post(ctx, "/v1/refunds", form, &out); err != nil {
+	req.Out = &out
+	if err := c.doRetrying(ctx, req); err != nil {
 		return nil, err
 	}
 	return &out, nil
 }
+
+// doRetrying corre um pedido com repetição das falhas passageiras quando ele se
+// diz idempotente. O cliente nasce sem repetições (as escritas do Stripe não
+// são idempotentes sem chave), e por isso a repetição liga-se só aqui.
+func (c *Client) doRetrying(ctx context.Context, r httpx.Request) error {
+	if !r.Idempotent {
+		return c.http.Do(ctx, r)
+	}
+	h := *c.http
+	h.MaxRetries = refundRetries
+	return h.Do(ctx, r)
+}
+
+// refundRetries é quantas vezes se repete um estorno com chave depois de uma
+// falha passageira.
+const refundRetries = 2
 
 // --- leitura financeira ------------------------------------------------------
 

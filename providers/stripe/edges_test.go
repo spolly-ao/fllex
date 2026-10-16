@@ -699,3 +699,112 @@ func TestCheckoutSessionHelpers(t *testing.T) {
 		t.Error("paga")
 	}
 }
+
+func TestRefundDeUmaSessaoDeCheckout(t *testing.T) {
+	// O Charge devolve a sessão (cs_) como referência, e o Stripe só estorna
+	// payment intents: a sessão lê-se primeiro para saber qual foi o dela.
+	var caminhos []string
+	var form url.Values
+	var chave string
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		caminhos = append(caminhos, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodGet {
+			fmt.Fprint(w, `{"id":"cs_1","status":"complete","payment_status":"paid","payment_intent":"pi_9"}`)
+			return
+		}
+		_ = r.ParseForm()
+		form, chave = r.PostForm, r.Header.Get("Idempotency-Key")
+		fmt.Fprint(w, `{"id":"re_9","status":"succeeded","amount":700,"currency":"usd"}`)
+	})
+	defer done()
+	res, err := p.Refund(context.Background(), payment.Refund{
+		ChargeRef: "cs_1", Amount: money.New(700, money.USD), IdempotencyKey: "re_nosso_1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RefundRef != "re_9" || res.Amount.Minor != 700 {
+		t.Errorf("estorno = %+v", res)
+	}
+	if strings.Join(caminhos, ",") != "GET /v1/checkout/sessions/cs_1,POST /v1/refunds" {
+		t.Errorf("pedidos = %v", caminhos)
+	}
+	if form.Get("payment_intent") != "pi_9" || chave != "re_nosso_1" {
+		t.Errorf("payment_intent = %q, Idempotency-Key = %q", form.Get("payment_intent"), chave)
+	}
+}
+
+func TestRefundDeUmaSessaoSemPagamento(t *testing.T) {
+	p, done := provider(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"id":"cs_1","status":"open","payment_status":"unpaid"}`)
+	})
+	defer done()
+	if _, err := p.Refund(context.Background(), payment.Refund{ChargeRef: "cs_1", Amount: money.New(1, money.USD)}); !errors.Is(err, payment.ErrInvalidTransition) {
+		t.Errorf("erro = %v", err)
+	}
+
+	p2, done2 := provider(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":{"message":"No such checkout.session"}}`)
+	})
+	defer done2()
+	if _, err := p2.Refund(context.Background(), payment.Refund{ChargeRef: "cs_x"}); err == nil {
+		t.Error("uma sessão que não existe devia dar erro")
+	}
+}
+
+func TestRefundComChaveRepeteAsFalhasPassageiras(t *testing.T) {
+	// Com chave, o Stripe devolve o mesmo estorno a um pedido repetido, e por
+	// isso uma falha passageira repete-se com a mesma chave.
+	var chaves []string
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		chaves = append(chaves, r.Header.Get("Idempotency-Key"))
+		if len(chaves) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		fmt.Fprint(w, `{"id":"re_1","status":"succeeded","amount":100,"currency":"eur"}`)
+	})
+	defer done()
+	p.client.http.RetryWait = time.Millisecond
+	res, err := p.Refund(context.Background(), payment.Refund{ChargeRef: "pi_1", Amount: money.New(100, money.EUR), IdempotencyKey: "k1"})
+	if err != nil || res.RefundRef != "re_1" {
+		t.Fatalf("estorno = %+v (%v)", res, err)
+	}
+	if len(chaves) != 2 || chaves[0] != "k1" || chaves[1] != "k1" {
+		t.Errorf("chaves = %v", chaves)
+	}
+}
+
+func TestRefundSemChaveNaoRepete(t *testing.T) {
+	// Sem chave, repetir era arriscar devolver o dinheiro duas vezes.
+	n := 0
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if r.Header.Get("Idempotency-Key") != "" {
+			t.Error("sem chave não se manda o cabeçalho")
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	defer done()
+	p.client.http.RetryWait = time.Millisecond
+	if _, err := p.Refund(context.Background(), payment.Refund{ChargeRef: "pi_1", Amount: money.New(100, money.EUR)}); err == nil {
+		t.Fatal("queria erro")
+	}
+	if n != 1 {
+		t.Errorf("pedidos = %d, queria 1", n)
+	}
+}
+
+func TestRefundPaymentIntentSemChave(t *testing.T) {
+	var chave string
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		chave = r.Header.Get("Idempotency-Key")
+		fmt.Fprint(w, `{"id":"re_1","status":"succeeded","amount":100,"currency":"eur"}`)
+	})
+	defer done()
+	res, err := p.Client().RefundPaymentIntent(context.Background(), "pi_1", 100, "")
+	if err != nil || res.ID != "re_1" || chave != "" {
+		t.Fatalf("estorno = %+v, chave %q (%v)", res, chave, err)
+	}
+}

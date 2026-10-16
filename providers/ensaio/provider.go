@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spolly-ao/fllex/money"
@@ -131,6 +132,38 @@ func (p *Provider) Charge(_ context.Context, req payment.ChargeRequest) (payment
 		}, nil
 	}
 	return payment.ChargeResult{}, payment.ErrUnsupportedMethod
+}
+
+// Refund devolve o que a rede devolveria a um estorno aceite: um identificador
+// e o estado aprovado, sem dinheiro nenhum a mexer-se.
+//
+// Existe para quem integra escrever o caminho do estorno contra o modo de teste
+// antes de ter contrato com uma rede que estorne. O ensaio não guarda as
+// cobranças, e por isso não sabe quanto foi cobrado: um estorno tem de dizer o
+// valor (o zero, que noutros gateways devolve tudo, aqui é recusado), e não se
+// recusa um estorno acima do cobrado. Essa conta é de quem pede, que é quem
+// sabe quanto já devolveu. A mesma chave de idempotência dá sempre o mesmo
+// identificador, como num gateway que a aceite.
+func (p *Provider) Refund(_ context.Context, r payment.Refund) (payment.RefundResult, error) {
+	if strings.TrimSpace(r.ChargeRef) == "" {
+		return payment.RefundResult{}, fmt.Errorf("ensaio: o estorno exige a cobrança: %w", payment.ErrInvalidTransition)
+	}
+	if r.Amount.Minor == 0 {
+		return payment.RefundResult{}, fmt.Errorf("ensaio: o estorno total exige o valor, porque o ensaio não guarda as cobranças: %w", payment.ErrUnsupported)
+	}
+	if !r.Amount.IsPositive() {
+		return payment.RefundResult{}, payment.ErrAmountNotPositive
+	}
+	semente := r.IdempotencyKey
+	if semente == "" {
+		semente = fmt.Sprintf("%s|%d|%s|%d", r.ChargeRef, r.Amount.Minor, r.Amount.Currency, time.Now().UnixNano())
+	}
+	soma := sha256.Sum256([]byte(r.ChargeRef + "|" + semente))
+	return payment.RefundResult{
+		RefundRef: fmt.Sprintf("re_ensaio_%x", soma[:12]),
+		Status:    payment.StatusApproved,
+		Amount:    r.Amount,
+	}, nil
 }
 
 // HonorsExpiry: o ensaio devolve o prazo pedido tal como veio, em todos os

@@ -319,6 +319,12 @@ type Refund struct {
 	Amount money.Amount
 	// Reason é o motivo, registado no gateway para consulta posterior.
 	Reason string
+	// IdempotencyKey identifica o estorno do lado de quem o pede. Os gateways
+	// que a aceitam (o Stripe) devolvem o mesmo estorno a um pedido repetido
+	// com a mesma chave, e é isso que deixa repetir um estorno cuja resposta
+	// se perdeu na rede sem devolver o dinheiro duas vezes. Vazia, cada pedido
+	// é um estorno novo, e uma resposta perdida não se pode repetir às cegas.
+	IdempotencyKey string
 }
 
 // RefundResult é o desfecho de um estorno.

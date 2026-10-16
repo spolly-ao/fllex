@@ -3,6 +3,7 @@ package stripe
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strconv"
 	"strings"
@@ -217,11 +218,29 @@ func (p *Provider) PortalURL(ctx context.Context, customerRef, returnURL string)
 }
 
 // Refund devolve dinheiro de uma cobrança.
+//
+// O ChargeRef pode ser o payment intent (pi_...) ou a referência que o
+// [Provider.Charge] devolveu, que é a sessão de checkout (cs_...): o Stripe só
+// estorna payment intents, e por isso a sessão lê-se primeiro para saber qual
+// foi o dela. Uma sessão que ainda não tem payment intent (não foi paga) não
+// tem nada para estornar. Com [payment.Refund.IdempotencyKey], um pedido
+// repetido devolve o mesmo estorno, e as falhas passageiras repetem-se.
 func (p *Provider) Refund(ctx context.Context, r payment.Refund) (payment.RefundResult, error) {
 	if !p.Configured() {
 		return payment.RefundResult{}, payment.ErrNotConfigured
 	}
-	res, err := p.client.RefundPaymentIntent(ctx, r.ChargeRef, r.Amount.Minor, r.Reason)
+	intent := strings.TrimSpace(r.ChargeRef)
+	if strings.HasPrefix(intent, "cs_") {
+		sess, err := p.client.GetCheckoutSession(ctx, intent)
+		if err != nil {
+			return payment.RefundResult{}, err
+		}
+		if sess.PaymentIntent == "" {
+			return payment.RefundResult{}, fmt.Errorf("stripe: a sessão %s não tem pagamento para estornar: %w", intent, payment.ErrInvalidTransition)
+		}
+		intent = sess.PaymentIntent
+	}
+	res, err := p.client.RefundPaymentIntentOnce(ctx, intent, r.Amount.Minor, r.Reason, r.IdempotencyKey)
 	if err != nil {
 		return payment.RefundResult{}, err
 	}
