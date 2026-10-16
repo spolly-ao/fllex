@@ -196,6 +196,14 @@ o pagamento passou, e quando ela se perde o dinheiro foi cobrado e o nosso lado
 não sabe. `momenu.Reconciler` recupera esses pagamentos correlacionando as
 facturas do gateway por telemóvel, valor e janela de tempo.
 
+**O relatório do gateway é o que se compara com o livro.** Os gateways com
+relatório na API implementam `payment.StatementReader` (o Stripe, pelas linhas
+do saldo; o MoMenu, pelas facturas, só em contas Pro); os que só o deixam
+descarregar do painel implementam `payment.StatementImporter`, que lê o CSV pelo
+nome das colunas (o Proxypay e o BAI PAGA). Uma leitura incompleta é um erro, e
+nunca uma lista parcial: uma linha em falta faz um pagamento verdadeiro parecer
+inventado.
+
 **A fila do Proxypay é a rede de segurança.** Aplica-se o efeito primeiro e só
 depois se retira o pagamento da fila. Pela ordem contrária, um processo que
 morra no meio deixa o pagamento fora da fila e sem efeito nenhum.

@@ -37,7 +37,9 @@ pedidos em paralelo.
 ordem de preferência, e um provider sem credenciais fica registado mas não é
 escolhido: é assim que o kwanza vai pelo gateway local e o resto pelo Stripe
 sem um `if`. As capacidades opcionais (`Verifier`, `Canceller`, `ExpiryHonorer`, `Subscriber`, `SubscriptionVerifier`,
-`WebhookParser`, `Refunder`, `Reporter`) estão em `payment/provider.go`.
+`WebhookParser`, `Refunder`, `Reporter`) estão em `payment/provider.go`, e os
+relatórios para a reconciliação (`StatementReader` pela API, `StatementImporter`
+pelo CSV do painel do gateway) em `payment/statement.go`.
 
 **`providers/*` traduzem, e só eles.** Cada um converte `ChargeRequest` para a
 língua do gateway e as respostas e webhooks de volta para `payment.Event`,
