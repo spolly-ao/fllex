@@ -47,6 +47,13 @@ var (
 	// ErrAmountNotPositive: tentou-se cobrar zero ou menos.
 	ErrAmountNotPositive = errors.New("fllex: o valor a cobrar tem de ser positivo")
 
+	// ErrExpired: o prazo para o cliente autorizar passou sem resposta dele (o
+	// telemóvel que não confirmou a tempo, o código que caducou). Não é uma
+	// recusa: ninguém disse que não, e nada foi cobrado. Separá-lo da recusa é
+	// o que deixa quem mostra o desfecho dizer "o tempo acabou" em vez de
+	// "foi recusado", e repetir a mesma chamada dá o mesmo resultado.
+	ErrExpired = errors.New("fllex: o prazo para autorizar passou sem resposta do cliente")
+
 	// ErrNotFound: o registo pedido não existe.
 	ErrNotFound = errors.New("fllex: não encontrado")
 )
@@ -110,7 +117,8 @@ func IsRetryable(err error) bool {
 		errors.Is(err, ErrMandateRequired),
 		errors.Is(err, ErrMandateNotActive),
 		errors.Is(err, ErrAmountNotPositive),
-		errors.Is(err, ErrInsufficientFunds):
+		errors.Is(err, ErrInsufficientFunds),
+		errors.Is(err, ErrExpired):
 		return false
 	}
 	return true

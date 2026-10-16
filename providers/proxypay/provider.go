@@ -106,6 +106,13 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 	}, nil
 }
 
+// HonorsExpiry: a validade da referência vai no pedido ao Proxypay
+// (end_datetime), e o ATM recusa-a depois dela. É a única coisa que este
+// provider cobra, por isso o método é sempre a referência.
+func (p *Provider) HonorsExpiry(m payment.Method) bool {
+	return m == payment.MethodReference || m == ""
+}
+
 // CancelCharge invalida a referência.
 func (p *Provider) CancelCharge(ctx context.Context, _ payment.ChargeRequest, res payment.ChargeResult) error {
 	if !p.Configured() {

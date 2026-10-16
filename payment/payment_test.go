@@ -266,3 +266,47 @@ func TestMethodBAIPaga(t *testing.T) {
 		t.Error("um cliente pode escolher BAI PAGA sozinho")
 	}
 }
+
+// prazoAplicado é um provider que diz aplicar o prazo a alguns métodos.
+type prazoAplicado struct {
+	fakeProvider
+	aplica []Method
+}
+
+func (p *prazoAplicado) HonorsExpiry(m Method) bool {
+	for _, v := range p.aplica {
+		if v == m {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRegistryForHonoringExpiry(t *testing.T) {
+	// O preferido não aplica o prazo; o segundo aplica, mas está por
+	// configurar; o terceiro aplica-o à referência, e é o escolhido.
+	semPrazo := &fakeProvider{name: "momenu", methods: []Method{MethodMCX, MethodReference},
+		currencies: []money.Currency{money.AOA}, configured: true}
+	porConfigurar := &prazoAplicado{fakeProvider: fakeProvider{name: "outro", methods: []Method{MethodReference},
+		currencies: []money.Currency{money.AOA}}, aplica: []Method{MethodReference}}
+	comPrazo := &prazoAplicado{fakeProvider: fakeProvider{name: "proxypay", methods: []Method{MethodReference, MethodMCX},
+		currencies: []money.Currency{money.AOA}, configured: true}, aplica: []Method{MethodReference}}
+	r := NewRegistry().Register(semPrazo, porConfigurar, comPrazo)
+
+	if p, ok := r.For(MethodReference, money.AOA); !ok || p.Name() != "momenu" {
+		t.Fatalf("o For continua a seguir a ordem: %v", p)
+	}
+	if p, ok := r.ForHonoringExpiry(MethodReference, money.AOA); !ok || p.Name() != "proxypay" {
+		t.Fatalf("a referência com prazo resolveu para %v", p)
+	}
+	// O método que nenhum aplica não tem provider, nem a moeda que ninguém cobra.
+	if p, ok := r.ForHonoringExpiry(MethodMCX, money.AOA); ok {
+		t.Errorf("MCX com prazo resolveu para %v", p.Name())
+	}
+	if p, ok := r.ForHonoringExpiry(MethodReference, money.EUR); ok {
+		t.Errorf("referência em EUR resolveu para %v", p.Name())
+	}
+	if p, ok := r.ForHonoringExpiry(MethodCard, money.AOA); ok {
+		t.Errorf("cartão resolveu para %v", p.Name())
+	}
+}

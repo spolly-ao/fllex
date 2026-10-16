@@ -133,6 +133,11 @@ func (p *Provider) Charge(_ context.Context, req payment.ChargeRequest) (payment
 	return payment.ChargeResult{}, payment.ErrUnsupportedMethod
 }
 
+// HonorsExpiry: o ensaio devolve o prazo pedido tal como veio, em todos os
+// métodos que esperam por quem paga. Quem integra vê no ensaio o mesmo prazo
+// que verá num gateway que o aplique.
+func (p *Provider) HonorsExpiry(payment.Method) bool { return true }
+
 // CancelCharge não tem nada para revogar do lado de fora.
 func (p *Provider) CancelCharge(context.Context, payment.ChargeRequest, payment.ChargeResult) error {
 	return nil

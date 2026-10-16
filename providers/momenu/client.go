@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/spolly-ao/fllex/internal/httpx"
+	"github.com/spolly-ao/fllex/payment"
 	"github.com/spolly-ao/fllex/phone"
 )
 
@@ -111,9 +113,29 @@ func (c *Client) InitMCX(ctx context.Context, req MCXRequest, idempotencia strin
 		return nil, err
 	}
 	if !out.Success {
+		// O telemóvel que não confirmou dentro da janela do Multicaixa Express
+		// não recusou nada: o tempo acabou, e nada foi cobrado. Vinha como
+		// "recusada", e quem mostrava o desfecho dizia ao cliente que o
+		// pagamento tinha sido recusado.
+		if tempoEsgotado(out.Message) {
+			return nil, fmt.Errorf("momenu: multicaixa express: %w: %s", payment.ErrExpired, out.Message)
+		}
 		return nil, recusa("multicaixa express", out.Message)
 	}
 	return &out, nil
+}
+
+// tempoEsgotado diz se a mensagem de uma recusa do MoMenu é o fim da janela de
+// confirmação e não uma recusa. O MoMenu põe o código à cabeça da mensagem,
+// em maiúsculas (TIMEOUT, EXPIRED), como nos outros códigos que devolve.
+func tempoEsgotado(mensagem string) bool {
+	m := strings.ToUpper(strings.TrimSpace(mensagem))
+	for _, codigo := range []string{"TIMEOUT", "TIME_OUT", "EXPIRED"} {
+		if strings.HasPrefix(m, codigo) {
+			return true
+		}
+	}
+	return false
 }
 
 // CreateReference cria uma referência bancária.

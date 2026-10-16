@@ -145,3 +145,12 @@ func TestOResto(t *testing.T) {
 		t.Errorf("cancelar = %v", err)
 	}
 }
+
+func TestOEnsaioAplicaOPrazoPedido(t *testing.T) {
+	var h payment.ExpiryHonorer = New()
+	for _, m := range []payment.Method{payment.MethodReference, payment.MethodMCX, payment.MethodBAIPaga} {
+		if !h.HonorsExpiry(m) {
+			t.Errorf("%s: o ensaio devolve o prazo pedido", m)
+		}
+	}
+}

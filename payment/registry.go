@@ -100,6 +100,28 @@ func (r *Registry) For(method Method, currency money.Currency) (Provider, bool) 
 	return nil, false
 }
 
+// ForHonoringExpiry é o [Registry.For] para quem precisa de que o prazo da
+// cobrança ([ChargeRequest.ExpiresAt]) se aplique no gateway: escolhe, pela
+// mesma ordem de preferência, o primeiro provider configurado que cobra o
+// método na moeda **e** diz que aplica o prazo ([ExpiryHonorer]). Um provider
+// que não o diga fica de fora, mesmo que seja o preferido: uma referência que
+// continua viva no ATM depois da janela de quem a pediu é dinheiro que chega
+// sem ninguém à espera dele.
+func (r *Registry) ForHonoringExpiry(method Method, currency money.Currency) (Provider, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, name := range r.order {
+		p := r.providers[name]
+		if !p.Configured() || !p.SupportsCurrency(currency) || !supportsMethod(p, method) {
+			continue
+		}
+		if h, ok := p.(ExpiryHonorer); ok && h.HonorsExpiry(method) {
+			return p, true
+		}
+	}
+	return nil, false
+}
+
 // ForCurrency devolve o primeiro provider configurado que processa esta moeda,
 // sem exigir um método concreto.
 func (r *Registry) ForCurrency(currency money.Currency) (Provider, bool) {

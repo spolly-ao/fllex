@@ -258,6 +258,18 @@ type Canceller interface {
 	CancelCharge(ctx context.Context, req ChargeRequest, result ChargeResult) error
 }
 
+// ExpiryHonorer é a capacidade de aplicar no gateway o [ChargeRequest.ExpiresAt]:
+// a cobrança deixa de se poder pagar no prazo pedido, e não no que o gateway
+// escolher. Quem guarda a cobrança dentro de uma janela própria (uma sessão de
+// pagamento, uma factura com data) precisa disto para não emitir uma
+// referência que continua viva no ATM depois de a janela fechar.
+//
+// Um provider que ignora o prazo, ou o copia para o resultado sem o mandar ao
+// gateway, não implementa esta capacidade, ou responde false para o método.
+type ExpiryHonorer interface {
+	HonorsExpiry(m Method) bool
+}
+
 // Subscriber é a capacidade de gerir subscrições recorrentes no gateway (só o
 // cartão a tem, na prática).
 type Subscriber interface {

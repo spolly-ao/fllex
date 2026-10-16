@@ -52,7 +52,7 @@ func TestIsRetryableWithNil(t *testing.T) {
 	for _, err := range []error{
 		ErrNotConfigured, ErrUnsupportedMethod, ErrUnsupportedCurrency, ErrUnsupported,
 		ErrNoProvider, ErrBadSignature, ErrInvalidTransition, ErrMandateRequired,
-		ErrMandateNotActive, ErrAmountNotPositive, ErrInsufficientFunds,
+		ErrMandateNotActive, ErrAmountNotPositive, ErrInsufficientFunds, ErrExpired,
 	} {
 		if IsRetryable(err) {
 			t.Errorf("%v não melhora com repetição", err)

@@ -36,7 +36,7 @@ pedidos em paralelo.
 `Method`, `Event`), o contrato `Provider` e o `Registry`. A ordem de registo é a
 ordem de preferência, e um provider sem credenciais fica registado mas não é
 escolhido: é assim que o kwanza vai pelo gateway local e o resto pelo Stripe
-sem um `if`. As capacidades opcionais (`Verifier`, `Canceller`, `Subscriber`,
+sem um `if`. As capacidades opcionais (`Verifier`, `Canceller`, `ExpiryHonorer`, `Subscriber`,
 `WebhookParser`, `Refunder`, `Reporter`) estão em `payment/provider.go`.
 
 **`providers/*` traduzem, e só eles.** Cada um converte `ChargeRequest` para a

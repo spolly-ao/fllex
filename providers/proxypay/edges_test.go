@@ -480,3 +480,14 @@ func TestMetadataGoesIntoCustomFields(t *testing.T) {
 		t.Errorf("a nossa referência devia estar lá: %v", fields)
 	}
 }
+
+func TestOProxypayAplicaOPrazoDaReferencia(t *testing.T) {
+	p := New(Config{APIKey: "k", Entity: "11333"})
+	var h payment.ExpiryHonorer = p
+	if !h.HonorsExpiry(payment.MethodReference) || !h.HonorsExpiry("") {
+		t.Error("a referência leva o end_datetime pedido")
+	}
+	if h.HonorsExpiry(payment.MethodMCX) {
+		t.Error("o Proxypay não cobra Multicaixa Express, e não aplica prazo nenhum a ele")
+	}
+}

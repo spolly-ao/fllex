@@ -602,3 +602,57 @@ func TestOEventoTrazOIdentificadorDeDeduplicacao(t *testing.T) {
 		t.Errorf("identificador do evento = %q, queria tx-77", ev.ID)
 	}
 }
+
+// --- o tempo que acaba não é uma recusa -----------------------------------------
+
+func TestOTempoEsgotadoNoMulticaixaExpressNaoEUmaRecusa(t *testing.T) {
+	// O telemóvel que não confirmou dentro da janela vinha como "recusada", e
+	// o cliente lia que o pagamento tinha sido recusado quando ninguém o
+	// recusou e nada foi cobrado.
+	for _, mensagem := range []string{
+		"TIMEOUT: o cliente não confirmou no telemóvel a tempo",
+		"time_out",
+		" EXPIRED ",
+	} {
+		p, done := comRelogio(t, func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprintf(w, `{"success":false,"message":%q}`, mensagem)
+		})
+		_, err := p.Charge(context.Background(), payment.ChargeRequest{
+			Amount: money.FromMajor(5900, money.AOA), Method: payment.MethodMCX,
+			Customer: payment.Customer{Phone: "923000000"},
+		})
+		done()
+		if !errors.Is(err, payment.ErrExpired) {
+			t.Fatalf("%q: erro = %v, queria payment.ErrExpired", mensagem, err)
+		}
+		if payment.IsRetryable(err) {
+			t.Errorf("%q: o tempo esgotado não melhora com repetição", mensagem)
+		}
+		if strings.Contains(err.Error(), "recusada") {
+			t.Errorf("%q: o tempo esgotado continua a dizer recusada: %v", mensagem, err)
+		}
+	}
+
+	// E uma recusa a sério continua a ser recusa, com o motivo.
+	p, done := comRelogio(t, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"success":false,"message":"O cliente recusou o pagamento"}`)
+	})
+	defer done()
+	_, err := p.Charge(context.Background(), payment.ChargeRequest{
+		Amount: money.FromMajor(5900, money.AOA), Method: payment.MethodMCX,
+		Customer: payment.Customer{Phone: "923000000"},
+	})
+	if err == nil || errors.Is(err, payment.ErrExpired) || !strings.Contains(err.Error(), "recusada") {
+		t.Fatalf("erro = %v, queria uma recusa", err)
+	}
+}
+
+func TestOMoMenuNaoAplicaOPrazoPedido(t *testing.T) {
+	// A API do MoMenu não recebe a validade da referência: escolhe-a ela. Por
+	// isso o provider não diz que a aplica, e quem precisa de um prazo escolhe
+	// outro gateway.
+	var p payment.Provider = New(Config{APIKey: "chave"})
+	if _, ok := p.(payment.ExpiryHonorer); ok {
+		t.Fatal("o MoMenu não pode anunciar que aplica o ExpiresAt")
+	}
+}
