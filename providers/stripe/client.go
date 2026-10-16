@@ -45,6 +45,13 @@ type Config struct {
 	// webhook e o relógio local, para travar reenvios de eventos antigos
 	// capturados por terceiros. Zero usa cinco minutos, o valor recomendado.
 	SignatureTolerance time.Duration
+	// TestClock é um relógio de ensaio do Stripe (clock_...), onde nascem os
+	// clientes das subscrições. É a única forma de ver uma renovação sem
+	// esperar um mês: o relógio adianta-se pela API e o Stripe cobra, factura
+	// e avisa como no dia verdadeiro. Só existe em contas de teste; com uma
+	// chave de produção, [Provider.Charge] recusa a subscrição em vez de o
+	// ignorar em silêncio.
+	TestClock string
 }
 
 // Client fala com a API do Stripe.
@@ -70,6 +77,12 @@ func NewClient(cfg Config) *Client {
 
 // Configured indica se há chave secreta.
 func (c *Client) Configured() bool { return strings.TrimSpace(c.cfg.SecretKey) != "" }
+
+// Live indica se a chave é de produção (sk_live_ ou rk_live_).
+func (c *Client) Live() bool {
+	k := strings.TrimSpace(c.cfg.SecretKey)
+	return strings.HasPrefix(k, "sk_live_") || strings.HasPrefix(k, "rk_live_")
+}
 
 func (c *Client) post(ctx context.Context, path string, form url.Values, out any) error {
 	return c.http.Do(ctx, httpx.Request{
@@ -170,6 +183,67 @@ func (c *Client) BillingPortalURL(ctx context.Context, customerID, returnURL str
 		return "", err
 	}
 	return out.URL, nil
+}
+
+// Subscription é a parte de uma subscrição que nos interessa.
+type Subscription struct {
+	ID                string            `json:"id"`
+	Customer          string            `json:"customer"`
+	Status            string            `json:"status"`
+	CancelAtPeriodEnd bool              `json:"cancel_at_period_end"`
+	CurrentPeriodEnd  int64             `json:"current_period_end"`
+	Metadata          map[string]string `json:"metadata"`
+	// Items traz o fim do período nas versões da API a partir de 2025-03-31,
+	// em que ele saiu da subscrição e passou para cada item.
+	Items struct {
+		Data []struct {
+			CurrentPeriodEnd int64 `json:"current_period_end"`
+		} `json:"data"`
+	} `json:"items"`
+}
+
+// PeriodEnd é o fim do período pago, lido onde a versão da API o puser.
+func (s Subscription) PeriodEnd() int64 {
+	if s.CurrentPeriodEnd > 0 {
+		return s.CurrentPeriodEnd
+	}
+	for _, it := range s.Items.Data {
+		if it.CurrentPeriodEnd > 0 {
+			return it.CurrentPeriodEnd
+		}
+	}
+	return 0
+}
+
+// GetSubscription lê uma subscrição.
+func (c *Client) GetSubscription(ctx context.Context, id string) (*Subscription, error) {
+	var out Subscription
+	if err := c.get(ctx, "/v1/subscriptions/"+url.PathEscape(id), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// CreateCustomer cria um cliente. Com testClock, o cliente nasce nesse relógio
+// de ensaio, e as subscrições dele passam a andar ao ritmo do relógio.
+func (c *Client) CreateCustomer(ctx context.Context, email, name, testClock string) (string, error) {
+	form := url.Values{}
+	if email != "" {
+		form.Set("email", email)
+	}
+	if name != "" {
+		form.Set("name", name)
+	}
+	if testClock != "" {
+		form.Set("test_clock", testClock)
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := c.post(ctx, "/v1/customers", form, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
 }
 
 // --- estornos ----------------------------------------------------------------
@@ -295,14 +369,42 @@ func (c *Client) Charges(ctx context.Context, limit int) ([]Charge, error) {
 
 // Invoice é uma factura do Stripe.
 type Invoice struct {
-	ID        string `json:"id"`
-	Number    string `json:"number"`
-	AmountDue int64  `json:"amount_due"`
-	Currency  string `json:"currency"`
-	Status    string `json:"status"`
-	HostedURL string `json:"hosted_invoice_url"`
-	PDF       string `json:"invoice_pdf"`
-	Created   int64  `json:"created"`
+	ID         string `json:"id"`
+	Number     string `json:"number"`
+	AmountDue  int64  `json:"amount_due"`
+	AmountPaid int64  `json:"amount_paid"`
+	Currency   string `json:"currency"`
+	Status     string `json:"status"` // draft | open | paid | uncollectible | void
+	HostedURL  string `json:"hosted_invoice_url"`
+	PDF        string `json:"invoice_pdf"`
+	Created    int64  `json:"created"`
+	Customer   string `json:"customer"`
+	// Subscription é onde a subscrição vem até à versão 2025-03-31 da API; a
+	// partir dela vem em Parent. [Invoice.SubscriptionID] lê as duas.
+	Subscription      string `json:"subscription"`
+	BillingReason     string `json:"billing_reason"`
+	StatusTransitions struct {
+		PaidAt int64 `json:"paid_at"`
+	} `json:"status_transitions"`
+	Parent struct {
+		SubscriptionDetails struct {
+			Subscription string `json:"subscription"`
+		} `json:"subscription_details"`
+	} `json:"parent"`
+}
+
+// SubscriptionID é a subscrição da factura, na forma antiga ou na nova.
+func (i Invoice) SubscriptionID() string {
+	return firstNonEmpty(i.Subscription, i.Parent.SubscriptionDetails.Subscription)
+}
+
+// GetInvoice lê uma factura.
+func (c *Client) GetInvoice(ctx context.Context, id string) (*Invoice, error) {
+	var out Invoice
+	if err := c.get(ctx, "/v1/invoices/"+url.PathEscape(id), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // InvoicesForCustomer devolve as facturas de um cliente.

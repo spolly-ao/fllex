@@ -105,6 +105,15 @@ motor.Links = subscription.LinkFunc(gerarLinkDePagamento)
 relatorio := motor.Run(ctx) // passagem completa e idempotente
 ```
 
+O motor é para os métodos que não cobram sozinhos (Multicaixa Express,
+referência). No cartão, quem renova é o Stripe: a cobrança com
+`Mode: payment.ModeSubscription` abre a subscrição lá, e cada ciclo chega como
+`invoice.paid` (ou `invoice.payment_failed`). O aviso não é a última palavra:
+a factura confirma-se com `VerifyCharge("in_...")`, e o estado da subscrição
+com `payment.SubscriptionVerifier`. Em ensaio, `stripe.Config.TestClock` faz
+nascer os clientes num relógio de teste do Stripe, que se adianta pela API para
+ver uma renovação sem esperar um mês.
+
 ### Preços por quantidade
 
 ```go

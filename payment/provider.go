@@ -207,6 +207,12 @@ type ChargeStatus struct {
 	// Amount é o valor efectivamente recebido, quando o gateway o devolve.
 	// Compará-lo com o esperado apanha pagamentos parciais.
 	Amount *money.Amount
+	// SubscriptionRef e CustomerRef são a subscrição e o cliente que a
+	// cobrança abriu no gateway, quando abriu (o primeiro pagamento de uma
+	// subscrição por cartão). Vêm da consulta, e não do webhook, para que quem
+	// guarda a subscrição a guarde pelo que o gateway confirmou.
+	SubscriptionRef string
+	CustomerRef     string
 	// Raw guarda a resposta original.
 	Raw map[string]any
 }
@@ -278,6 +284,30 @@ type Subscriber interface {
 	CancelSubscription(ctx context.Context, subscriptionRef string, atPeriodEnd bool) error
 	// PortalURL devolve uma página onde o cliente gere a sua subscrição.
 	PortalURL(ctx context.Context, customerRef, returnURL string) (string, error)
+}
+
+// SubscriptionStatus é o estado de uma subscrição consultada no gateway.
+type SubscriptionStatus struct {
+	// Status é o estado normalizado: [StatusApproved] activa (ou em período
+	// experimental), [StatusRejected] com uma renovação por cobrar,
+	// [StatusCancelled] terminada, [StatusPending] ainda por concluir.
+	Status Status
+	// CustomerRef é o cliente do gateway a quem a subscrição pertence.
+	CustomerRef string
+	// CurrentPeriodEnd é o fim do período já pago.
+	CurrentPeriodEnd *time.Time
+	// CancelAtPeriodEnd indica que termina no fim do período pago.
+	CancelAtPeriodEnd bool
+}
+
+// SubscriptionVerifier é a capacidade de consultar uma subscrição no gateway.
+//
+// É o par do [Verifier] para os avisos que não falam de uma cobrança: "a
+// renovação falhou" e "a subscrição terminou" chegam assinados, e mesmo assim
+// não se dá uma subscrição por atrasada ou cancelada sem perguntar ao gateway
+// em que estado ela está agora.
+type SubscriptionVerifier interface {
+	VerifySubscription(ctx context.Context, subscriptionRef string) (SubscriptionStatus, error)
 }
 
 // WebhookParser é a capacidade de validar e normalizar os eventos que o gateway

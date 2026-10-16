@@ -85,8 +85,19 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 		form.Set("client_reference_id", req.Reference)
 		form.Set("metadata["+p.ReferenceKey+"]", req.Reference)
 	}
-	if req.Customer.ProviderRef != "" {
-		form.Set("customer", req.Customer.ProviderRef)
+	customer := req.Customer.ProviderRef
+	if customer == "" && req.Mode == payment.ModeSubscription && p.client.cfg.TestClock != "" {
+		if p.client.Live() {
+			return payment.ChargeResult{}, fmt.Errorf("stripe: o relógio de ensaio só existe em contas de teste, e a chave é de produção: %w", payment.ErrNotConfigured)
+		}
+		id, err := p.client.CreateCustomer(ctx, req.Customer.Email, req.Customer.Name, p.client.cfg.TestClock)
+		if err != nil {
+			return payment.ChargeResult{}, err
+		}
+		customer = id
+	}
+	if customer != "" {
+		form.Set("customer", customer)
 	} else if req.Customer.Email != "" {
 		form.Set("customer_email", req.Customer.Email)
 	}
@@ -129,7 +140,7 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 		URL:         sess.URL,
 		ProviderRef: sess.ID,
 		StatusRef:   sess.ID,
-		CustomerRef: sess.Customer,
+		CustomerRef: firstNonEmpty(sess.Customer, customer),
 	}
 	if sess.ExpiresAt > 0 {
 		t := time.Unix(sess.ExpiresAt, 0).UTC()
@@ -172,11 +183,17 @@ func (p *Provider) ReuseOrCharge(ctx context.Context, existingSessionID string, 
 	return p.Charge(ctx, req)
 }
 
-// VerifyCharge consulta o estado de uma sessão de checkout.
+// VerifyCharge consulta o estado de uma sessão de checkout (cs_...) ou de uma
+// factura (in_...).
 //
 // O Stripe assina e reentrega os webhooks, por isso a consulta não é o caminho
 // normal de confirmação. Serve para o cliente que volta da página de pagamento
-// antes de o webhook chegar, e para reconciliar depois de uma paragem.
+// antes de o webhook chegar, para reconciliar depois de uma paragem, e para
+// quem não aceita um aviso como última palavra.
+//
+// A factura é a cobrança das renovações: o Stripe cobra sozinho cada ciclo de
+// uma subscrição, sem sessão de checkout, e o que fica para consultar é a
+// factura que o aviso invoice.paid trouxe.
 func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payment.ChargeStatus, error) {
 	if !p.Configured() {
 		return payment.ChargeStatus{}, payment.ErrNotConfigured
@@ -184,11 +201,14 @@ func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payme
 	if strings.TrimSpace(statusRef) == "" {
 		return payment.ChargeStatus{}, nil
 	}
+	if strings.HasPrefix(statusRef, "in_") {
+		return p.verifyInvoice(ctx, statusRef)
+	}
 	sess, err := p.client.GetCheckoutSession(ctx, statusRef)
 	if err != nil {
 		return payment.ChargeStatus{}, err
 	}
-	st := payment.ChargeStatus{Status: payment.StatusPending}
+	st := payment.ChargeStatus{Status: payment.StatusPending, SubscriptionRef: sess.Subscription, CustomerRef: sess.Customer}
 	switch {
 	case sess.Paid():
 		st.Status = payment.StatusApproved
@@ -199,6 +219,59 @@ func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payme
 		st.Status = payment.StatusExpired
 	}
 	return st, nil
+}
+
+// verifyInvoice consulta uma factura. Paga traz o valor que entrou, para quem
+// confirma o comparar com o esperado; aberta continua pendente, porque o
+// Stripe volta a tentar cobrá-la sozinho; anulada (void) e incobrável
+// (uncollectible) já não se pagam.
+func (p *Provider) verifyInvoice(ctx context.Context, id string) (payment.ChargeStatus, error) {
+	inv, err := p.client.GetInvoice(ctx, id)
+	if err != nil {
+		return payment.ChargeStatus{}, err
+	}
+	st := payment.ChargeStatus{Status: payment.StatusPending, SubscriptionRef: inv.SubscriptionID(), CustomerRef: inv.Customer}
+	switch inv.Status {
+	case "paid":
+		st.Status = payment.StatusApproved
+		st.Paid = true
+		paidAt := time.Now().UTC()
+		if inv.StatusTransitions.PaidAt > 0 {
+			paidAt = time.Unix(inv.StatusTransitions.PaidAt, 0).UTC()
+		}
+		st.PaidAt = &paidAt
+		amt := money.New(inv.AmountPaid, money.NormalizeCurrency(inv.Currency))
+		st.Amount = &amt
+	case "void":
+		st.Status = payment.StatusCancelled
+	case "uncollectible":
+		st.Status = payment.StatusRejected
+	}
+	return st, nil
+}
+
+// VerifySubscription consulta uma subscrição.
+func (p *Provider) VerifySubscription(ctx context.Context, subscriptionRef string) (payment.SubscriptionStatus, error) {
+	if !p.Configured() {
+		return payment.SubscriptionStatus{}, payment.ErrNotConfigured
+	}
+	if strings.TrimSpace(subscriptionRef) == "" {
+		return payment.SubscriptionStatus{}, fmt.Errorf("stripe: a consulta exige a subscrição: %w", payment.ErrUnsupported)
+	}
+	sub, err := p.client.GetSubscription(ctx, subscriptionRef)
+	if err != nil {
+		return payment.SubscriptionStatus{}, err
+	}
+	out := payment.SubscriptionStatus{
+		Status:            normalizeSubscriptionStatus(sub.Status),
+		CustomerRef:       sub.Customer,
+		CancelAtPeriodEnd: sub.CancelAtPeriodEnd,
+	}
+	if end := sub.PeriodEnd(); end > 0 {
+		t := time.Unix(end, 0).UTC()
+		out.CurrentPeriodEnd = &t
+	}
+	return out, nil
 }
 
 // CancelSubscription cancela a subscrição no Stripe.
@@ -364,57 +437,18 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 		ev.Status = payment.StatusCancelled
 
 	case "invoice.payment_failed":
-		var o struct {
-			Customer     string `json:"customer"`
-			Subscription string `json:"subscription"`
-			ID           string `json:"id"`
-		}
-		_ = json.Unmarshal(raw.Data.Object, &o)
+		o := p.readInvoice(raw.Data.Object, ev)
 		ev.Type = payment.EventChargeFailed
-		ev.CustomerRef = o.Customer
-		ev.SubscriptionRef = o.Subscription
-		ev.InvoiceRef = o.ID
 		ev.Status = payment.StatusRejected
+		amt := money.New(o.AmountDue, money.NormalizeCurrency(o.Currency))
+		ev.Amount = &amt
 
 	case "invoice.paid", "invoice.payment_succeeded":
-		var o struct {
-			ID            string            `json:"id"`
-			Customer      string            `json:"customer"`
-			Subscription  string            `json:"subscription"`
-			AmountPaid    int64             `json:"amount_paid"`
-			Currency      string            `json:"currency"`
-			BillingReason string            `json:"billing_reason"`
-			Metadata      map[string]string `json:"metadata"`
-			Lines         struct {
-				Data []struct {
-					Period struct {
-						Start int64 `json:"start"`
-						End   int64 `json:"end"`
-					} `json:"period"`
-				} `json:"data"`
-			} `json:"lines"`
-		}
-		_ = json.Unmarshal(raw.Data.Object, &o)
+		o := p.readInvoice(raw.Data.Object, ev)
 		ev.Type = payment.EventInvoicePaid
-		ev.CustomerRef = o.Customer
-		ev.SubscriptionRef = o.Subscription
-		ev.InvoiceRef = o.ID
-		ev.BillingReason = o.BillingReason
-		ev.Metadata = o.Metadata
-		ev.Reference = o.Metadata[p.ReferenceKey]
 		ev.Status = payment.StatusApproved
 		amt := money.New(o.AmountPaid, money.NormalizeCurrency(o.Currency))
 		ev.Amount = &amt
-		if len(o.Lines.Data) > 0 {
-			if s := o.Lines.Data[0].Period.Start; s > 0 {
-				t := time.Unix(s, 0).UTC()
-				ev.PeriodStart = &t
-			}
-			if e := o.Lines.Data[0].Period.End; e > 0 {
-				t := time.Unix(e, 0).UTC()
-				ev.PeriodEnd = &t
-			}
-		}
 
 	case "charge.refunded":
 		var o struct {
@@ -437,15 +471,79 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 	return ev, nil
 }
 
-func (p *Provider) applySubscription(rawObj json.RawMessage, ev *payment.Event) {
-	var o struct {
-		ID                string            `json:"id"`
-		Customer          string            `json:"customer"`
-		Status            string            `json:"status"`
-		CurrentPeriodEnd  int64             `json:"current_period_end"`
-		CancelAtPeriodEnd bool              `json:"cancel_at_period_end"`
-		Metadata          map[string]string `json:"metadata"`
+// invoiceObject é a factura tal como vem num aviso. A subscrição e os
+// metadados dela mudaram de sítio na versão 2025-03-31 da API (de
+// subscription e subscription_details para parent.subscription_details), e os
+// avisos chegam na versão da conta: lêem-se as duas formas, para uma conta que
+// suba de versão não deixar de correlacionar as renovações.
+type invoiceObject struct {
+	ID                  string            `json:"id"`
+	Customer            string            `json:"customer"`
+	Subscription        string            `json:"subscription"`
+	PaymentIntent       string            `json:"payment_intent"`
+	AmountPaid          int64             `json:"amount_paid"`
+	AmountDue           int64             `json:"amount_due"`
+	Currency            string            `json:"currency"`
+	BillingReason       string            `json:"billing_reason"`
+	HostedURL           string            `json:"hosted_invoice_url"`
+	Metadata            map[string]string `json:"metadata"`
+	SubscriptionDetails struct {
+		Metadata map[string]string `json:"metadata"`
+	} `json:"subscription_details"`
+	Parent struct {
+		SubscriptionDetails struct {
+			Subscription string            `json:"subscription"`
+			Metadata     map[string]string `json:"metadata"`
+		} `json:"subscription_details"`
+	} `json:"parent"`
+	Lines struct {
+		Data []struct {
+			Period struct {
+				Start int64 `json:"start"`
+				End   int64 `json:"end"`
+			} `json:"period"`
+		} `json:"data"`
+	} `json:"lines"`
+}
+
+// readInvoice preenche o evento com o que é comum às facturas pagas e às que
+// falharam. A nossa referência não vem na factura (os metadados dela nascem
+// vazios nas renovações): vem nos da subscrição, onde o Charge a pôs.
+func (p *Provider) readInvoice(rawObj json.RawMessage, ev *payment.Event) invoiceObject {
+	var o invoiceObject
+	_ = json.Unmarshal(rawObj, &o)
+	meta := o.Metadata
+	for _, m := range []map[string]string{o.SubscriptionDetails.Metadata, o.Parent.SubscriptionDetails.Metadata} {
+		if len(meta) == 0 {
+			meta = m
+		}
 	}
+	ev.CustomerRef = o.Customer
+	ev.SubscriptionRef = firstNonEmpty(o.Subscription, o.Parent.SubscriptionDetails.Subscription)
+	ev.InvoiceRef = o.ID
+	ev.InvoiceURL = o.HostedURL
+	ev.ChargeRef = o.PaymentIntent
+	ev.BillingReason = o.BillingReason
+	ev.Metadata = meta
+	ev.Reference = meta[p.ReferenceKey]
+	ev.PlanRef = meta[p.PlanKey]
+	ev.Interval = meta[p.IntervalKey]
+	ev.Method = payment.MethodCard
+	if len(o.Lines.Data) > 0 {
+		if s := o.Lines.Data[0].Period.Start; s > 0 {
+			t := time.Unix(s, 0).UTC()
+			ev.PeriodStart = &t
+		}
+		if e := o.Lines.Data[0].Period.End; e > 0 {
+			t := time.Unix(e, 0).UTC()
+			ev.PeriodEnd = &t
+		}
+	}
+	return o
+}
+
+func (p *Provider) applySubscription(rawObj json.RawMessage, ev *payment.Event) {
+	var o Subscription
 	_ = json.Unmarshal(rawObj, &o)
 	ev.SubscriptionRef = o.ID
 	ev.CustomerRef = o.Customer
@@ -457,8 +555,8 @@ func (p *Provider) applySubscription(rawObj json.RawMessage, ev *payment.Event) 
 	if ev.Status == "" {
 		ev.Status = normalizeSubscriptionStatus(o.Status)
 	}
-	if o.CurrentPeriodEnd > 0 {
-		t := time.Unix(o.CurrentPeriodEnd, 0).UTC()
+	if end := o.PeriodEnd(); end > 0 {
+		t := time.Unix(end, 0).UTC()
 		ev.CurrentPeriodEnd = &t
 	}
 }
