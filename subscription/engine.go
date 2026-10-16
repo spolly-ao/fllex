@@ -153,6 +153,11 @@ func (e *Engine) Config() Config { return e.cfg }
 // pagou; avisar antes de cobrar dá ao cliente tempo de reagir; e expirar por
 // último garante que ninguém é cortado no mesmo instante em que a sua
 // confirmação estava a ser processada.
+//
+// Os passos das capacidades opcionais ([OverdueStore], [PeriodEndStore]) só
+// correm quando o [Store] as implementa: a falha de pagamento por atraso antes
+// de limpar e expirar, e o fim do período por último, pela mesma razão que a
+// expiração.
 func (e *Engine) Run(ctx context.Context) Report {
 	var r Report
 	r.Confirmed = e.ProcessConfirmations(ctx)
@@ -160,8 +165,10 @@ func (e *Engine) Run(ctx context.Context) Report {
 	r.Charged = e.ProcessCharges(ctx)
 	r.Retried = e.ProcessRetries(ctx)
 	r.Dunned = e.ProcessDunning(ctx)
+	r.Overdue = e.ProcessOverdue(ctx)
 	r.Cleaned = e.ProcessStaleCharges(ctx)
 	r.Expired = e.ProcessExpiry(ctx)
+	r.Ended = e.ProcessPeriodEnds(ctx)
 	return r
 }
 
@@ -172,8 +179,14 @@ type Report struct {
 	Charged   int
 	Retried   int
 	Dunned    int
-	Cleaned   int
-	Expired   int
+	// Overdue conta as renovações por pagar que passaram a falha de pagamento
+	// no fim do ciclo ([Engine.ProcessOverdue]).
+	Overdue int
+	Cleaned int
+	Expired int
+	// Ended conta as subscrições terminadas no fim do período
+	// ([Engine.ProcessPeriodEnds]).
+	Ended int
 }
 
 // ProcessConfirmations confirma, junto do gateway, as renovações pendentes que
