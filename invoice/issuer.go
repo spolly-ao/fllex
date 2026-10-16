@@ -269,6 +269,7 @@ var DefaultPrefixes = map[Kind]string{
 	KindInvoice:  "FT",
 	KindProforma: "PF",
 	KindCredit:   "NC",
+	KindReceipt:  "RC",
 }
 
 // Next devolve o próximo número do tipo indicado.

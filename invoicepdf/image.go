@@ -3,7 +3,9 @@ package invoicepdf
 import (
 	"bytes"
 	"fmt"
-	"image/png"
+	"image"
+	_ "image/jpeg" // regista o descodificador: um logótipo em JPEG também serve
+	_ "image/png"  // idem, para o PNG
 )
 
 // logo é uma imagem já preparada para entrar no PDF.
@@ -13,7 +15,7 @@ type logo struct {
 	alpha         []byte // um byte por pixel; nil quando a imagem é opaca
 }
 
-// decodeLogo lê um PNG e separa a cor da transparência.
+// decodeLogo lê um PNG ou um JPEG e separa a cor da transparência.
 //
 // O PDF não sabe o que é um PNG: guarda as amostras em bruto e a transparência
 // numa segunda imagem em tons de cinzento, a máscara suave. Separá-las é todo o
@@ -24,7 +26,10 @@ type logo struct {
 // de escala de cinzentos, porque a conversão passa pela interface comum de
 // imagem e não pelo formato de origem.
 func decodeLogo(data []byte) (*logo, error) {
-	img, err := png.Decode(bytes.NewReader(data))
+	// O formato reconhece-se pelo conteúdo. O JPEG entra porque é o formato
+	// em que muitas marcas têm o logótipo, e recusá-lo obrigava quem integra a
+	// converter imagens só para ter um PDF.
+	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("invoicepdf: ler o logótipo: %w", err)
 	}

@@ -2,6 +2,9 @@ package proxypay
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"time"
@@ -163,12 +166,24 @@ func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payme
 	return payment.ChargeStatus{Status: payment.StatusPending}, nil
 }
 
-// ParseWebhook lê a confirmação que o Proxypay envia para a URL de callback.
+// ParseWebhook valida a assinatura e lê a confirmação que o Proxypay envia
+// para a URL de callback.
 //
-// O corpo não vem assinado: valide o pedido pela URL secreta ou por um segredo
-// partilhado antes de chegar aqui, e trate o evento como um aviso de que vale a
-// pena ir à fila de pagamentos confirmar.
-func (p *Provider) ParseWebhook(payload []byte, _ string) (*payment.Event, error) {
+// **O Proxypay assina cada entrega**: o cabeçalho `X-Signature` traz o
+// HMAC-SHA-256 do corpo em bruto, com a chave de API como segredo, em
+// hexadecimal minúsculo. É esse valor que se passa em signature. Este pacote
+// dizia que o corpo não vinha assinado, e aceitava qualquer POST: quem
+// descobrisse o endereço podia anunciar referências pagas.
+//
+// A assinatura verifica-se primeiro, e nada do corpo é olhado antes disso. Sem
+// chave de API, ou com uma assinatura que não confere, devolve
+// [payment.ErrBadSignature]. Mesmo assinado, o evento é um aviso: a
+// confirmação de que se pode depender continua a ser a fila de pagamentos
+// ([Provider.VerifyCharge]).
+func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Event, error) {
+	if !assinaturaValida(p.client.cfg.APIKey, payload, signature) {
+		return nil, payment.ErrBadSignature
+	}
 	var body struct {
 		ID           int64          `json:"id"`
 		ReferenceID  string         `json:"reference_id"`
@@ -208,4 +223,21 @@ func (p *Provider) ttl() time.Duration {
 		return p.TTL
 	}
 	return defaultReferenceTTL
+}
+
+// assinaturaValida indica se o corpo foi assinado com a chave de API:
+// `HexEncode(HMAC-SHA-256(chave, corpo))`, sobre o corpo tal como chegou, byte
+// a byte. A comparação é em tempo constante.
+func assinaturaValida(chave string, corpo []byte, assinatura string) bool {
+	chave, assinatura = strings.TrimSpace(chave), strings.TrimSpace(assinatura)
+	if chave == "" || assinatura == "" {
+		return false
+	}
+	recebida, err := hex.DecodeString(assinatura)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(chave))
+	mac.Write(corpo)
+	return hmac.Equal(mac.Sum(nil), recebida)
 }

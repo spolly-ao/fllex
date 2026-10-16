@@ -37,8 +37,8 @@ go get github.com/spolly-ao/fllex
 - `subscription`: motor de renovação: avisos, emissão de cobrança, tolerância, retentativas, expiração.
 - `coupon`: cupões de desconto, com as recusas explicadas ao cliente.
 - `entitlement`: limites de plano e suspensão reversível dos recursos que passam do tecto.
-- `invoice`: proformas, facturas e notas de crédito, com numeração sequencial.
-- `invoicepdf`: o PDF desses documentos, escrito à mão sobre a biblioteca padrão.
+- `invoice`: proformas, facturas, notas de crédito e recibos de pagamento, com numeração sequencial.
+- `invoicepdf`: o PDF desses documentos, escrito à mão sobre a biblioteca padrão, com o logótipo em PNG ou JPEG.
 - `mandate`: autorizações de débito directo.
 - `tokens`: links de pagamento de uso único.
 - `outbox`: eventos que saem se e só se a alteração ficou gravada.
@@ -131,6 +131,11 @@ pdf, err := invoicepdf.Render(inv, invoicepdf.Options{
     Footer: "Empresa, Lda. · NIF 5417000000",
 })
 ```
+
+Quem processa pagamentos por conta de outrem passa o recibo, e não a factura,
+que é de quem vende: um documento com `Kind: invoice.KindReceipt` sai como
+"Recibo de pagamento", com quem recebeu e quem pagou, o identificador do
+pagamento (`PaymentID`) e a frase que diz que não tem valor fiscal.
 
 ## Exemplos
 

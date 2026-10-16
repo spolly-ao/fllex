@@ -37,7 +37,7 @@ type Options struct {
 	// Accent é a cor da marca, em "#RRGGBB". Vazio usa um cinzento escuro,
 	// que é o que fica bem impresso a preto e branco.
 	Accent string
-	// Logo é um PNG do logótipo do emitente. Opcional: sem ele, o nome do
+	// Logo é o logótipo do emitente, em PNG ou JPEG. Opcional: sem ele, o nome do
 	// emitente é composto em texto, que numa factura funciona igualmente bem.
 	Logo []byte
 	// LogoHeight limita a altura do logótipo em pontos. Zero usa 34.
@@ -96,6 +96,7 @@ func Render(inv *invoice.Invoice, opt Options) ([]byte, error) {
 	d.newPage()
 	d.header()
 	d.parties()
+	d.receiptNotice()
 	d.meta()
 	d.payment()
 	d.table()
@@ -177,7 +178,7 @@ func (d *doc) stamp() {
 		label, col = d.loc.cancelled, voidColor
 	case d.inv.Kind == invoice.KindProforma && d.inv.Status == invoice.StatusPending:
 		label, col = d.loc.unpaid, dueColor
-	case d.inv.Status == invoice.StatusPaid && d.inv.Kind == invoice.KindInvoice:
+	case d.inv.Status == invoice.StatusPaid && (d.inv.Kind == invoice.KindInvoice || d.inv.Kind == invoice.KindReceipt):
 		label, col = d.loc.paid, paidColor
 	default:
 		return
@@ -194,8 +195,12 @@ func (d *doc) parties() {
 	rightX := margin + colW + 24
 
 	top := d.y
-	d.c.text(margin, top, bold, 7.5, mutedColor, strings.ToUpper(d.loc.issuer))
-	d.c.text(rightX, top, bold, 7.5, mutedColor, strings.ToUpper(d.loc.billTo))
+	left, right := d.loc.issuer, d.loc.billTo
+	if d.inv.Kind == invoice.KindReceipt {
+		left, right = d.loc.receivedBy, d.loc.paidBy
+	}
+	d.c.text(margin, top, bold, 7.5, mutedColor, strings.ToUpper(left))
+	d.c.text(rightX, top, bold, 7.5, mutedColor, strings.ToUpper(right))
 	top += 14
 
 	leftLines := partyLines(d.inv.Issuer, d.loc)
@@ -246,6 +251,25 @@ func partyLines(p invoice.Party, loc strings_) []string {
 	return lines
 }
 
+// receiptNotice diz, num recibo, que o documento não é uma factura.
+//
+// Fica logo a seguir às partes, e não no rodapé: é a frase que decide o que a
+// pessoa faz com o papel (pedir a factura a quem vendeu), e no rodapé ninguém a
+// lê.
+func (d *doc) receiptNotice() {
+	if d.inv.Kind != invoice.KindReceipt {
+		return
+	}
+	lines := regular.wrap(d.loc.receiptNotice, 8.5, contentW-32)
+	h := float64(len(lines))*11 + 14
+	d.c.rect(margin, d.y, contentW, h, panelColor)
+	d.c.rect(margin, d.y, 3, h, d.opt.accent())
+	for i, line := range lines {
+		d.c.text(margin+16, d.y+7+float64(i)*11, regular, 8.5, inkColor, line)
+	}
+	d.y += h + 18
+}
+
 // --- datas ---------------------------------------------------------------------
 
 func (d *doc) meta() {
@@ -265,6 +289,9 @@ func (d *doc) meta() {
 	}
 	if d.inv.RelatedTo != "" {
 		items = append(items, item{d.loc.relatedTo, d.inv.RelatedTo})
+	}
+	if d.inv.Kind == invoice.KindReceipt && d.inv.PaymentID != "" {
+		items = append(items, item{d.loc.payment, d.inv.PaymentID})
 	}
 
 	step := contentW / float64(len(items))
@@ -405,7 +432,11 @@ func (d *doc) totals() {
 	h := 30.0
 	x := colTotalR - 240
 	d.c.rect(x, d.y, 240, h, d.opt.accent())
-	d.c.text(x+14, d.y+11, bold, 9, whiteColor, strings.ToUpper(d.loc.total))
+	label := d.loc.total
+	if d.inv.Kind == invoice.KindReceipt {
+		label = d.loc.totalPaid
+	}
+	d.c.text(x+14, d.y+11, bold, 9, whiteColor, strings.ToUpper(label))
 	d.c.textRight(colTotalR-14, d.y+9, bold, 13, whiteColor, d.money(d.inv.Total))
 	d.y += h + 18
 }

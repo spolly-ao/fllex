@@ -2,6 +2,9 @@ package proxypay
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -232,11 +235,20 @@ func TestAcknowledgeError(t *testing.T) {
 	}
 }
 
+// assinar é o que o Proxypay faz a cada entrega: HMAC-SHA-256 do corpo com a
+// chave de API, em hexadecimal minúsculo.
+func assinar(chave, corpo string) string {
+	mac := hmac.New(sha256.New, []byte(chave))
+	mac.Write([]byte(corpo))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
 func TestWebhookParsing(t *testing.T) {
 	p := New(Config{APIKey: "chave"})
 
-	ev, err := p.ParseWebhook([]byte(`{"id":42,"reference_id":"123456789","amount":"5900.00",
-		"datetime":"2026-04-05T10:00:00Z","custom_fields":{"invoice":"cobranca-7"}}`), "")
+	corpo := `{"id":42,"reference_id":"123456789","amount":"5900.00",
+		"datetime":"2026-04-05T10:00:00Z","custom_fields":{"invoice":"cobranca-7"}}`
+	ev, err := p.ParseWebhook([]byte(corpo), assinar("chave", corpo))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,15 +259,42 @@ func TestWebhookParsing(t *testing.T) {
 		t.Errorf("valor e data = %v, %v", ev.Amount, ev.OccurredAt)
 	}
 
-	// Corpo ilegível e corpo sem referência ignoram-se, em vez de darem erro.
+	// Corpo ilegível e corpo sem referência, assinados, ignoram-se em vez de
+	// darem erro.
 	for _, body := range []string{`isto não é json`, `{"amount":"100"}`} {
-		ev, err := p.ParseWebhook([]byte(body), "")
+		ev, err := p.ParseWebhook([]byte(body), assinar("chave", body))
 		if err != nil {
 			t.Fatalf("%s: %v", body, err)
 		}
 		if !ev.Ignorable() {
 			t.Errorf("%s: tipo = %s", body, ev.Type)
 		}
+	}
+}
+
+// Uma entrega sem assinatura, com a assinatura de outra chave, de outro corpo,
+// ou que nem é hexadecimal, é recusada antes de se olhar para o corpo. Sem
+// chave de API não há como verificar, e recusa-se também.
+func TestWebhookSemAssinaturaValidaERecusado(t *testing.T) {
+	p := New(Config{APIKey: "chave"})
+	corpo := `{"id":42,"reference_id":"123456789","amount":"5900.00"}`
+	for nome, assinatura := range map[string]string{
+		"sem assinatura":    "",
+		"outra chave":       assinar("outra", corpo),
+		"outro corpo":       assinar("chave", corpo+" "),
+		"não hexadecimal":   "zz",
+		"maiúsculas falsas": strings.ToUpper(assinar("outra", corpo)),
+	} {
+		if _, err := p.ParseWebhook([]byte(corpo), assinatura); !errors.Is(err, payment.ErrBadSignature) {
+			t.Errorf("%s: erro = %v, queria ErrBadSignature", nome, err)
+		}
+	}
+	if _, err := New(Config{}).ParseWebhook([]byte(corpo), assinar("", corpo)); !errors.Is(err, payment.ErrBadSignature) {
+		t.Errorf("sem chave de API: erro = %v", err)
+	}
+	// Espaços à volta do cabeçalho não contam.
+	if _, err := p.ParseWebhook([]byte(corpo), " "+assinar("chave", corpo)+" "); err != nil {
+		t.Errorf("com espaços: %v", err)
 	}
 }
 

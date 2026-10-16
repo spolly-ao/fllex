@@ -15,7 +15,7 @@ import (
 	"github.com/spolly-ao/fllex/money"
 )
 
-// Kind distingue os dois documentos.
+// Kind distingue os documentos.
 type Kind string
 
 const (
@@ -28,6 +28,11 @@ const (
 	// anterior. Uma factura emitida nunca se apaga nem se altera; corrige-se com
 	// um documento novo que aponta para ela.
 	KindCredit Kind = "credit_note"
+	// KindReceipt é o recibo do pagamento: confirma que o dinheiro foi
+	// recebido, e mais nada. Não é uma factura nem tem valor fiscal. Serve a
+	// quem processa pagamentos por conta de outrem: a factura é de quem vende,
+	// e quem cobrou passa só o recibo.
+	KindReceipt Kind = "receipt"
 )
 
 // Status é o estado de um documento.

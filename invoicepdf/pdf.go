@@ -1,4 +1,5 @@
-// Package invoicepdf gera o PDF de uma factura ou proforma.
+// Package invoicepdf gera o PDF de uma factura, proforma, nota de crédito ou
+// recibo de pagamento.
 //
 // Escreve o formato à mão, com a biblioteca padrão e mais nada. Parece
 // exagerado até se olhar para a alternativa: qualquer biblioteca de PDF é uma
