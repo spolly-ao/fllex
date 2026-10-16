@@ -60,10 +60,11 @@ func TestAMesmaCobrancaDaSempreAMesmaReferencia(t *testing.T) {
 }
 
 func TestOsQueEsperamPelaConfirmacaoFicamPendentes(t *testing.T) {
-	// O ecrã de espera é obrigatório nestes três, e quem integra tem de o
-	// escrever antes da primeira espera real.
+	// O ecrã de espera é obrigatório nestes, e quem integra tem de o escrever
+	// antes da primeira espera real. O BAI PAGA está aqui porque o cliente
+	// autoriza no telemóvel, com o OTP, e a resposta chega depois.
 	for _, m := range []payment.Method{
-		payment.MethodMCX, payment.MethodWallet, payment.MethodDirectDebit,
+		payment.MethodMCX, payment.MethodBAIPaga, payment.MethodWallet, payment.MethodDirectDebit,
 		payment.MethodExternal,
 	} {
 		res, err := New().Charge(context.Background(), pedido(m, 1500000))
@@ -137,8 +138,8 @@ func TestOResto(t *testing.T) {
 	if !p.SupportsCurrency(money.AOA) || !p.SupportsCurrency(money.Currency("XOF")) {
 		t.Error("um ensaio não tem razão para recusar moedas")
 	}
-	if len(p.Methods()) != 7 {
-		t.Errorf("métodos = %d, esperava os sete", len(p.Methods()))
+	if len(p.Methods()) != 8 {
+		t.Errorf("métodos = %d, esperava os oito", len(p.Methods()))
 	}
 	if err := p.CancelCharge(context.Background(), payment.ChargeRequest{}, payment.ChargeResult{}); err != nil {
 		t.Errorf("cancelar = %v", err)
