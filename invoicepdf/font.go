@@ -108,6 +108,23 @@ func (f font) truncate(s string, size, maxWidth float64) string {
 	return ""
 }
 
+// fit devolve o tamanho de letra com que um texto cabe na largura dada,
+// descendo meio ponto de cada vez a partir de size, e nunca abaixo de min.
+//
+// Serve os identificadores (o pagamento, o documento relacionado): um id
+// cortado com reticências não serve para nada a quem o procura, por isso
+// encolhe-se a letra em vez de cortar o texto. Abaixo de min deixava de se ler,
+// e aí fica min mesmo que passe um pouco da largura.
+func (f font) fit(s string, size, maxWidth, min float64) float64 {
+	for size > min && f.width(s, size) > maxWidth {
+		size -= 0.5
+	}
+	if size < min {
+		return min
+	}
+	return size
+}
+
 // toWinAnsi converte texto para a codificação WinAnsi, que é a que as fontes de
 // base do PDF usam.
 //

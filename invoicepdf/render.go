@@ -272,32 +272,44 @@ func (d *doc) receiptNotice() {
 
 // --- datas ---------------------------------------------------------------------
 
+// minIDSize é a letra mais pequena com que um identificador ainda se lê no papel.
+const minIDSize = 6
+
 func (d *doc) meta() {
-	type item struct{ label, value string }
-	items := []item{{d.loc.issued, formatDate(d.inv.IssuedAt)}}
+	// whole marca os identificadores, que encolhem em vez de se cortarem.
+	type item struct {
+		label, value string
+		whole        bool
+	}
+	items := []item{{label: d.loc.issued, value: formatDate(d.inv.IssuedAt)}}
 
 	if d.inv.PaidAt != nil {
-		items = append(items, item{d.loc.paidOn, formatDate(*d.inv.PaidAt)})
+		items = append(items, item{label: d.loc.paidOn, value: formatDate(*d.inv.PaidAt)})
 	} else if d.inv.DueDate != "" {
-		items = append(items, item{d.loc.due, d.inv.DueDate})
+		items = append(items, item{label: d.loc.due, value: d.inv.DueDate})
 	}
 	if d.inv.PeriodStart != nil && d.inv.PeriodEnd != nil {
-		items = append(items, item{d.loc.period,
-			formatDate(*d.inv.PeriodStart) + " - " + formatDate(*d.inv.PeriodEnd)})
+		items = append(items, item{label: d.loc.period,
+			value: formatDate(*d.inv.PeriodStart) + " - " + formatDate(*d.inv.PeriodEnd)})
 	} else if d.inv.PeriodEnd != nil {
-		items = append(items, item{d.loc.until, formatDate(*d.inv.PeriodEnd)})
+		items = append(items, item{label: d.loc.until, value: formatDate(*d.inv.PeriodEnd)})
 	}
 	if d.inv.RelatedTo != "" {
-		items = append(items, item{d.loc.relatedTo, d.inv.RelatedTo})
+		items = append(items, item{label: d.loc.relatedTo, value: d.inv.RelatedTo, whole: true})
 	}
 	if d.inv.Kind == invoice.KindReceipt && d.inv.PaymentID != "" {
-		items = append(items, item{d.loc.payment, d.inv.PaymentID})
+		items = append(items, item{label: d.loc.payment, value: d.inv.PaymentID, whole: true})
 	}
 
 	step := contentW / float64(len(items))
 	for i, it := range items {
 		x := margin + float64(i)*step
 		d.c.text(x, d.y, bold, 7.5, mutedColor, strings.ToUpper(it.label))
+		if it.whole {
+			size := regular.fit(it.value, 9.5, step-12, minIDSize)
+			d.c.text(x, d.y+12, regular, size, inkColor, it.value)
+			continue
+		}
 		d.c.text(x, d.y+12, regular, 9.5, inkColor, regular.truncate(it.value, 9.5, step-12))
 	}
 	d.y += 38

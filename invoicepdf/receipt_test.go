@@ -128,3 +128,45 @@ func TestJPEGLogoIsEmbedded(t *testing.T) {
 		t.Error("um JPEG não tem transparência e não deve levar máscara")
 	}
 }
+
+// Um id de pagamento que não cabe na sua coluna encolhe, e nunca se corta: com
+// reticências, deixava de servir a quem o procura no extrato do gateway.
+func TestLongPaymentIDIsNeverCut(t *testing.T) {
+	inv := receiptSample()
+	inv.PaymentID = "pay_WWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+	inv.RelatedTo = "FT-2026-WWWWWWWWWWWWWWWWWWWW"
+	start := time.Date(2026, time.October, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, time.October, 31, 0, 0, 0, 0, time.UTC)
+	inv.PeriodStart, inv.PeriodEnd = &start, &end
+	doc, err := Render(inv, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := content(t, doc)
+	for _, want := range []string{escape(inv.PaymentID), escape(inv.RelatedTo)} {
+		if !strings.Contains(body, want) {
+			t.Errorf("o identificador %q não está inteiro no recibo", want)
+		}
+	}
+	if strings.Contains(body, escape("pay_WWWW…")) {
+		t.Error("o id do pagamento foi cortado com reticências")
+	}
+}
+
+func TestFitShrinksDownToTheMinimum(t *testing.T) {
+	const id = "pay_WWWWWWWWWWWWWWWWWWWWWWWWWWWW"
+	if got := regular.fit("pay_1", 9.5, 200, minIDSize); got != 9.5 {
+		t.Errorf("um texto que cabe muda de tamanho: %v", got)
+	}
+	wide := regular.width(id, 9.5)
+	got := regular.fit(id, 9.5, wide*0.8, minIDSize)
+	if got >= 9.5 || got < minIDSize || regular.width(id, got) > wide*0.8 {
+		t.Errorf("devia encolher até caber: %v", got)
+	}
+	if got := regular.fit(id, 9.5, 1, minIDSize); got != minIDSize {
+		t.Errorf("abaixo do mínimo deixava de se ler: %v", got)
+	}
+	if got := regular.fit(id, 9.5, 1, 6.2); got != 6.2 {
+		t.Errorf("o mínimo entre dois passos não se respeita: %v", got)
+	}
+}
