@@ -296,6 +296,51 @@ func TestChargePixRefusesWhatStripeWouldRefuse(t *testing.T) {
 	}
 }
 
+func TestVerifyChargeAsksThePaymentIntentWhenTheSessionEndsUnpaid(t *testing.T) {
+	estado := "requires_action"
+	falhar := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/checkout/sessions/cs_pix":
+			fmt.Fprint(w, `{"id":"cs_pix","status":"complete","payment_status":"unpaid","payment_intent":"pi_pix"}`)
+		case "/v1/payment_intents/pi_pix":
+			if falhar {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprint(w, `{"error":{"message":"não existe"}}`)
+				return
+			}
+			fmt.Fprintf(w, `{"id":"pi_pix","status":%q}`, estado)
+		default:
+			t.Errorf("caminho inesperado %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	p := New(Config{SecretKey: "sk_teste", BaseURL: srv.URL})
+
+	for _, c := range []struct {
+		pi   string
+		quer payment.Status
+	}{
+		{"requires_action", payment.StatusPending},
+		{"processing", payment.StatusPending},
+		{"requires_payment_method", payment.StatusRejected},
+		{"canceled", payment.StatusCancelled},
+	} {
+		estado = c.pi
+		st, err := p.VerifyCharge(context.Background(), "cs_pix", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Status != c.quer || st.Paid {
+			t.Errorf("payment intent %s: estado = %s (pago %v), queria %s", c.pi, st.Status, st.Paid, c.quer)
+		}
+	}
+	falhar = true
+	if _, err := p.VerifyCharge(context.Background(), "cs_pix", ""); err == nil {
+		t.Error("uma consulta ao payment intent que falha tem de falhar a verificação, e não dizer pendente")
+	}
+}
+
 func TestParseWebhookPixWaitsForTheAsyncPayment(t *testing.T) {
 	secret := "whsec_teste"
 	p := New(Config{SecretKey: "sk_teste", WebhookSecret: secret})

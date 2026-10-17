@@ -248,6 +248,21 @@ func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payme
 		}
 	case sess.Status == "expired":
 		st.Status = payment.StatusExpired
+	case sess.Status == "complete" && sess.PaymentIntent != "":
+		// Um método assíncrono (o Pix) acaba a sessão sem pagamento: o
+		// cliente tem o código e ainda não pagou, ou já não vai pagar. A
+		// sessão não o distingue, e o pagamento por trás dela sim.
+		pi, err := p.client.GetPaymentIntent(ctx, sess.PaymentIntent)
+		if err != nil {
+			return payment.ChargeStatus{}, err
+		}
+		switch pi.Status {
+		case "requires_payment_method":
+			// O Pix expirou sem ser pago, ou o banco recusou-o.
+			st.Status = payment.StatusRejected
+		case "canceled":
+			st.Status = payment.StatusCancelled
+		}
 	}
 	return st, nil
 }

@@ -152,6 +152,21 @@ func (c *Client) GetCheckoutSession(ctx context.Context, id string) (*CheckoutSe
 	return &out, nil
 }
 
+// PaymentIntent é o pagamento por trás de uma sessão, só com o estado.
+type PaymentIntent struct {
+	ID     string `json:"id"`
+	Status string `json:"status"` // requires_action | processing | succeeded | requires_payment_method | canceled | ...
+}
+
+// GetPaymentIntent lê o estado de um pagamento.
+func (c *Client) GetPaymentIntent(ctx context.Context, id string) (*PaymentIntent, error) {
+	var out PaymentIntent
+	if err := c.get(ctx, "/v1/payment_intents/"+url.PathEscape(id), &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // --- subscrições -------------------------------------------------------------
 
 // CancelSubscription cancela uma subscrição. Com atPeriodEnd, marca-a para
