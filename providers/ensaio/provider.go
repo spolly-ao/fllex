@@ -56,6 +56,7 @@ func (p *Provider) Methods() []payment.Method {
 		payment.MethodMCX,
 		payment.MethodBAIPaga,
 		payment.MethodCard,
+		payment.MethodPix,
 		payment.MethodWallet,
 		payment.MethodDirectDebit,
 		payment.MethodExternal,
@@ -96,7 +97,7 @@ func (p *Provider) Charge(_ context.Context, req payment.ChargeRequest) (payment
 			ExpiresAt: prazo,
 		}, nil
 
-	case payment.MethodMCX, payment.MethodBAIPaga, payment.MethodWallet, payment.MethodDirectDebit:
+	case payment.MethodMCX, payment.MethodBAIPaga, payment.MethodPix, payment.MethodWallet, payment.MethodDirectDebit:
 		// Fica à espera da confirmação de quem paga, como a rede a sério (no
 		// BAI PAGA, a autorização com o OTP no telemóvel do cliente). Quem
 		// integra tem de escrever o ecrã de espera na mesma, e é isso que se

@@ -228,6 +228,101 @@ func TestChargeSendsMinorUnitsForZeroDecimalCurrency(t *testing.T) {
 	}
 }
 
+func TestChargePixAsksStripeForPixOnly(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = r.PostForm
+		fmt.Fprint(w, `{"id":"cs_pix","url":"https://checkout/cs_pix"}`)
+	}))
+	defer srv.Close()
+
+	p := New(Config{SecretKey: "sk_teste", BaseURL: srv.URL})
+	res, err := p.Charge(context.Background(), payment.ChargeRequest{
+		Amount: money.New(2500, money.BRL), Method: payment.MethodPix, Reference: "pag-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != payment.KindRedirect || res.ProviderRef != "cs_pix" {
+		t.Errorf("resultado = %+v", res)
+	}
+	if got.Get("payment_method_types[0]") != "pix" || got.Get("line_items[0][price_data][currency]") != "brl" {
+		t.Errorf("pedido = %v", got)
+	}
+}
+
+func TestChargeCardAsksStripeForCardOnly(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = r.PostForm
+		fmt.Fprint(w, `{"id":"cs_c","url":"https://checkout/cs_c"}`)
+	}))
+	defer srv.Close()
+
+	p := New(Config{SecretKey: "sk_teste", BaseURL: srv.URL})
+	if _, err := p.Charge(context.Background(), payment.ChargeRequest{Amount: money.New(2500, money.BRL), Method: payment.MethodCard}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Get("payment_method_types[0]") != "card" {
+		t.Errorf("tipos = %q, queria só o cartão", got.Get("payment_method_types[0]"))
+	}
+	// Sem método pedido, a página mostra os que a conta tiver ligados, como
+	// antes de haver Pix.
+	if _, err := p.Charge(context.Background(), payment.ChargeRequest{Amount: money.New(2500, money.EUR)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["payment_method_types[0]"]; ok {
+		t.Error("sem método, a sessão não devia restringir os tipos")
+	}
+}
+
+func TestChargePixRefusesWhatStripeWouldRefuse(t *testing.T) {
+	p := New(Config{SecretKey: "sk_teste", BaseURL: "http://127.0.0.1:1"})
+	_, err := p.Charge(context.Background(), payment.ChargeRequest{Amount: money.New(2500, money.EUR), Method: payment.MethodPix})
+	if !errors.Is(err, payment.ErrUnsupportedCurrency) {
+		t.Errorf("Pix em euros = %v, queria moeda não suportada", err)
+	}
+	_, err = p.Charge(context.Background(), payment.ChargeRequest{
+		Amount: money.New(2500, money.BRL), Method: payment.MethodPix, Mode: payment.ModeSubscription,
+	})
+	if !errors.Is(err, payment.ErrUnsupportedMethod) {
+		t.Errorf("subscrição por Pix = %v, queria método não suportado", err)
+	}
+	_, err = p.Charge(context.Background(), payment.ChargeRequest{Amount: money.New(2500, money.BRL), Method: payment.MethodMCX})
+	if !errors.Is(err, payment.ErrUnsupportedMethod) {
+		t.Errorf("MCX no Stripe = %v, queria método não suportado", err)
+	}
+}
+
+func TestParseWebhookPixWaitsForTheAsyncPayment(t *testing.T) {
+	secret := "whsec_teste"
+	p := New(Config{SecretKey: "sk_teste", WebhookSecret: secret})
+	ler := func(tipo, estado string) *payment.Event {
+		t.Helper()
+		payload := []byte(`{"id": "evt_pix", "type": "` + tipo + `",
+			"data": {"object": {"id": "cs_pix", "mode": "payment", "payment_intent": "pi_pix",
+				"payment_status": "` + estado + `", "payment_method_types": ["pix"],
+				"metadata": {"reference": "pag-1"}}}}`)
+		ev, err := p.ParseWebhook(payload, sign(t, payload, secret, time.Now()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ev
+	}
+	// A sessão acaba quando o cliente recebe o código, e ainda não pagou.
+	if ev := ler("checkout.session.completed", "unpaid"); ev.Type != payment.EventNone || ev.Status != payment.StatusPending || ev.Method != payment.MethodPix {
+		t.Errorf("sessão acabada sem pagar = %+v", ev)
+	}
+	if ev := ler("checkout.session.async_payment_succeeded", "paid"); ev.Type != payment.EventChargeSucceeded || ev.Status != payment.StatusApproved || ev.Method != payment.MethodPix || ev.Reference != "pag-1" {
+		t.Errorf("Pix pago = %+v", ev)
+	}
+	if ev := ler("checkout.session.async_payment_failed", "unpaid"); ev.Type != payment.EventChargeFailed || ev.Status != payment.StatusRejected {
+		t.Errorf("Pix falhado = %+v", ev)
+	}
+}
+
 func TestChargeWithoutKeyIsNotConfigured(t *testing.T) {
 	p := New(Config{})
 	if p.Configured() {

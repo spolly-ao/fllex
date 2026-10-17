@@ -30,7 +30,7 @@ func TestAccessorsAndDefaults(t *testing.T) {
 	if p.Client() != c {
 		t.Error("Client() devia devolver o cliente recebido")
 	}
-	if ms := p.Methods(); len(ms) != 1 || ms[0] != payment.MethodCard {
+	if ms := p.Methods(); len(ms) != 2 || ms[0] != payment.MethodCard || ms[1] != payment.MethodPix {
 		t.Errorf("métodos = %v", ms)
 	}
 	// O Stripe processa todas as moedas: quem quiser um gateway local para o

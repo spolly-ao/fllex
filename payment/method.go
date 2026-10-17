@@ -33,6 +33,11 @@ const (
 	// validade), paga ao multibanco, no ATM ou na app do banco.
 	MethodReference Method = "reference"
 
+	// MethodPix é o Pix brasileiro, em reais (BRL): o cliente paga com um
+	// código QR ou um código copia e cola na app do banco, e a confirmação chega
+	// depois, por aviso ou consulta. Não cobra sozinho no ciclo seguinte.
+	MethodPix Method = "pix"
+
 	// MethodDirectDebit é o débito directo em conta, cobrado contra um mandato
 	// previamente autorizado pelo titular (Proxypay DDS).
 	MethodDirectDebit Method = "direct_debit"
@@ -61,7 +66,7 @@ const (
 // para um cliente escolher.
 var AllMethods = []Method{
 	MethodMCX, MethodReference, MethodBAIPaga, MethodEKwanza, MethodCard,
-	MethodDirectDebit, MethodWallet, MethodExternal, MethodManual,
+	MethodPix, MethodDirectDebit, MethodWallet, MethodExternal, MethodManual,
 }
 
 // ParseMethod normaliza a escrita de um método. Aceita as variantes que
@@ -81,6 +86,8 @@ func ParseMethod(s string) Method {
 		return MethodBAIPaga
 	case "reference", "referencia", "referência", "ref", "atm", "proxypay":
 		return MethodReference
+	case "pix":
+		return MethodPix
 	case "direct_debit", "directdebit", "debito_directo", "débito_directo", "dd", "dds":
 		return MethodDirectDebit
 	case "wallet", "carteira", "saldo", "balance":
@@ -129,7 +136,7 @@ func (m Method) Recurring() bool {
 // consulta de estado ou webhook, e de um prazo de validade.
 func (m Method) Deferred() bool {
 	return m == MethodReference || m == MethodEKwanza || m == MethodExternal ||
-		m == MethodBAIPaga
+		m == MethodBAIPaga || m == MethodPix
 }
 
 // Instant indica se o desfecho do pagamento é conhecido na própria chamada.

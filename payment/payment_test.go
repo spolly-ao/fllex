@@ -267,6 +267,22 @@ func TestMethodBAIPaga(t *testing.T) {
 	}
 }
 
+func TestMethodPix(t *testing.T) {
+	for _, entrada := range []string{"pix", "PIX", " Pix "} {
+		if got := ParseMethod(entrada); got != MethodPix {
+			t.Errorf("ParseMethod(%q) = %q", entrada, got)
+		}
+	}
+	if !MethodPix.Valid() || !MethodPix.SelfService() {
+		t.Error("o Pix é um método conhecido, que o cliente escolhe sozinho")
+	}
+	// O cliente paga depois de ter o código, e a confirmação chega por aviso
+	// ou consulta: é diferido, e não cobra sozinho o ciclo seguinte.
+	if !MethodPix.Deferred() || MethodPix.Instant() || MethodPix.Recurring() {
+		t.Error("o Pix é diferido, e não é instantâneo nem recorrente")
+	}
+}
+
 // prazoAplicado é um provider que diz aplicar o prazo a alguns métodos.
 type prazoAplicado struct {
 	fakeProvider

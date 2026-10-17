@@ -48,9 +48,9 @@ func (p *Provider) Client() *Client { return p.client }
 // Name devolve "stripe".
 func (p *Provider) Name() string { return "stripe" }
 
-// Methods: o Stripe entra aqui como o método de cartão.
+// Methods: o cartão, e o Pix em reais.
 func (p *Provider) Methods() []payment.Method {
-	return []payment.Method{payment.MethodCard}
+	return []payment.Method{payment.MethodCard, payment.MethodPix}
 }
 
 // SupportsCurrency: o Stripe processa todas as moedas que usamos, incluindo o
@@ -71,7 +71,19 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 	if !p.Configured() {
 		return payment.ChargeResult{}, payment.ErrNotConfigured
 	}
-	if req.Method != "" && req.Method != payment.MethodCard {
+	switch req.Method {
+	case "", payment.MethodCard:
+	case payment.MethodPix:
+		// O Pix só existe em reais, e não cobra sozinho a renovação de uma
+		// subscrição: o Stripe recusaria a sessão, e recusa-se antes de a
+		// pedir, com o erro que diz porquê.
+		if req.Amount.Currency != money.BRL {
+			return payment.ChargeResult{}, payment.ErrUnsupportedCurrency
+		}
+		if req.Mode == payment.ModeSubscription {
+			return payment.ChargeResult{}, payment.ErrUnsupportedMethod
+		}
+	default:
 		return payment.ChargeResult{}, payment.ErrUnsupportedMethod
 	}
 	if !req.Amount.IsPositive() {
@@ -80,6 +92,12 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 
 	form := url.Values{}
 	form.Set("success_url", req.SuccessURL)
+	if req.Method != "" {
+		// Com o método pedido, a página do Stripe mostra só esse: sem isto
+		// mostra os que o painel da conta tiver ligados, e um pagamento por
+		// outro método chegava aqui com o método errado.
+		form.Set("payment_method_types[0]", string(req.Method))
+	}
 	form.Set("cancel_url", req.CancelURL)
 	if req.Reference != "" {
 		form.Set("client_reference_id", req.Reference)
@@ -401,15 +419,17 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 	}
 
 	switch raw.Type {
-	case "checkout.session.completed":
+	case "checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.async_payment_failed":
 		var o struct {
-			ID                string            `json:"id"`
-			Customer          string            `json:"customer"`
-			Subscription      string            `json:"subscription"`
-			PaymentIntent     string            `json:"payment_intent"`
-			ClientReferenceID string            `json:"client_reference_id"`
-			Mode              string            `json:"mode"`
-			Metadata          map[string]string `json:"metadata"`
+			ID                 string            `json:"id"`
+			Customer           string            `json:"customer"`
+			Subscription       string            `json:"subscription"`
+			PaymentIntent      string            `json:"payment_intent"`
+			ClientReferenceID  string            `json:"client_reference_id"`
+			Mode               string            `json:"mode"`
+			PaymentStatus      string            `json:"payment_status"`
+			PaymentMethodTypes []string          `json:"payment_method_types"`
+			Metadata           map[string]string `json:"metadata"`
 		}
 		_ = json.Unmarshal(raw.Data.Object, &o)
 		ev.Metadata = o.Metadata
@@ -419,12 +439,25 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 		ev.Reference = firstNonEmpty(o.Metadata[p.ReferenceKey], o.ClientReferenceID)
 		ev.PlanRef = o.Metadata[p.PlanKey]
 		ev.Interval = o.Metadata[p.IntervalKey]
-		ev.Status = payment.StatusApproved
-		ev.Method = payment.MethodCard
-		if o.Mode == "subscription" {
-			ev.Type = payment.EventSubscriptionActive
-		} else {
-			ev.Type = payment.EventChargeSucceeded
+		ev.Method = methodOf(o.PaymentMethodTypes)
+		switch {
+		case raw.Type == "checkout.session.async_payment_failed":
+			// O Pix que expirou sem ser pago, ou que o banco recusou.
+			ev.Type = payment.EventChargeFailed
+			ev.Status = payment.StatusRejected
+		case o.PaymentStatus == "unpaid":
+			// Um método assíncrono (o Pix) acaba a sessão antes de o dinheiro
+			// entrar: o cliente tem o código, e ainda não pagou. O pagamento
+			// chega depois, em checkout.session.async_payment_succeeded, e
+			// até lá não há nada a fazer.
+			ev.Status = payment.StatusPending
+		default:
+			ev.Status = payment.StatusApproved
+			if o.Mode == "subscription" {
+				ev.Type = payment.EventSubscriptionActive
+			} else {
+				ev.Type = payment.EventChargeSucceeded
+			}
 		}
 
 	case "checkout.session.expired":
@@ -598,6 +631,16 @@ func descriptionOf(req payment.ChargeRequest) string {
 		return req.Items[0].Description
 	}
 	return "Pagamento"
+}
+
+// methodOf diz o método de uma sessão pelos tipos que ela aceitava: uma
+// sessão só de Pix foi paga por Pix, e tudo o resto conta como cartão, como
+// antes de haver Pix.
+func methodOf(types []string) payment.Method {
+	if len(types) == 1 && types[0] == string(payment.MethodPix) {
+		return payment.MethodPix
+	}
+	return payment.MethodCard
 }
 
 func firstNonEmpty(vals ...string) string {
