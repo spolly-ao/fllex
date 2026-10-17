@@ -237,14 +237,18 @@ func (p *Provider) ParseWebhookWithHeaders(payload []byte, headers map[string]st
 		out.Raw["event"] = ev.Event
 	}
 
-	switch strings.TrimSpace(ev.OperationStatus) {
-	case "1":
+	// O MoMenu fala por números no Multicaixa Express ("1", "3", "4", "5"), e
+	// por nomes nas referências ("paid", "failed"), os mesmos nomes que a
+	// consulta devolve. Um aviso de referência paga, lido só pelos números,
+	// passava por "nada a fazer", e o pagamento esperava pela consulta.
+	switch strings.ToLower(strings.TrimSpace(ev.OperationStatus)) {
+	case "1", "paid":
 		out.Type, out.Status = payment.EventChargeSucceeded, payment.StatusApproved
 	case "3":
 		// Cancelado ou expirado. Era ignorado, e a cobrança ficava a ocupar a
 		// fila de consultas até a expiração a apanhar.
 		out.Type, out.Status = payment.EventChargeExpired, payment.StatusExpired
-	case "4", "5":
+	case "4", "5", "failed":
 		out.Type, out.Status = payment.EventChargeFailed, payment.StatusRejected
 	default:
 		out.Type, out.Status = payment.EventNone, payment.StatusPending

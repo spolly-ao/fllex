@@ -171,7 +171,8 @@ type WebhookEvent struct {
 	MerchantTransactionID string `json:"merchantTransactionId"`
 	EkwanzaTransactionID  string `json:"ekwanzaTransactionId"`
 	// OperationStatus é o que decide: "1" pago, "3" cancelado ou expirado,
-	// "4" falhado ou recusado, "5" erro.
+	// "4" falhado ou recusado, "5" erro, no Multicaixa Express; "paid" e
+	// "failed" nas referências.
 	OperationStatus string `json:"operationStatus"`
 	OperationData   any    `json:"operationData"`
 	InvoiceURL      string `json:"invoiceUrl"`

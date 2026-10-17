@@ -76,6 +76,37 @@ func TestWebhookAssinadoEAceito(t *testing.T) {
 	}
 }
 
+// O aviso de uma referência traz o estado por nome, e não por número: é a
+// forma do aviso que o MoMenu mandou a uma referência paga pelo multicaixa.
+func TestWebhookDeReferenciaComEstadoPorNome(t *testing.T) {
+	p := New(Config{APIKey: "c", WebhookSecret: segredoWebhook, Now: func() time.Time { return fixo }})
+	casos := []struct {
+		estado string
+		tipo   payment.EventType
+		status payment.Status
+	}{
+		{"paid", payment.EventChargeSucceeded, payment.StatusApproved},
+		{"PAID", payment.EventChargeSucceeded, payment.StatusApproved},
+		{"failed", payment.EventChargeFailed, payment.StatusRejected},
+		{"open", payment.EventNone, payment.StatusPending},
+	}
+	for _, c := range casos {
+		corpo, h := assina(`{"merchantTransactionId":"6fd551efad1e","operationStatus":"`+c.estado+`",`+
+			`"operationData":{"transactionId":"t","processor":"emis-reference","statusReason":"2000",`+
+			`"amount":"1000.0","currency":"aoa"},"operationId":"o","event":"payment.confirmed"}`, fixo)
+		ev, err := p.ParseWebhookWithHeaders([]byte(corpo), h)
+		if err != nil {
+			t.Fatalf("%s: leitura falhou: %v", c.estado, err)
+		}
+		if ev.Type != c.tipo || ev.Status != c.status {
+			t.Errorf("%s: evento = %v/%v, queria %v/%v", c.estado, ev.Type, ev.Status, c.tipo, c.status)
+		}
+		if ev.ID != "6fd551efad1e" || ev.ChargeRef != "6fd551efad1e" || ev.Reference != "6fd551efad1e" {
+			t.Errorf("%s: identificadores = %+v", c.estado, ev)
+		}
+	}
+}
+
 func TestWebhookSemAssinaturaOuComAssinaturaErradaERecusado(t *testing.T) {
 	// É a correcção que mais importa: é o webhook que marca uma referência como
 	// paga, por isso aceitá-lo sem verificar é uma forma de qualquer pessoa
