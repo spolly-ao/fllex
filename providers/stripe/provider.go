@@ -89,6 +89,20 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 	if !req.Amount.IsPositive() {
 		return payment.ChargeResult{}, payment.ErrAmountNotPositive
 	}
+	// O preço da renovação, quando o primeiro ciclo é mais barato: a
+	// subscrição nasce com o preço da renovação e um cupão que desconta a
+	// diferença uma vez, e o Stripe cobra o primeiro ciclo com o desconto e os
+	// seguintes pelo preço cheio, sozinho. Confere-se tudo antes de falar com
+	// o Stripe, para um pedido errado não deixar um cupão criado e por gastar.
+	recorrente := req.Amount
+	desconto := int64(0)
+	if r := req.RenewalAmount; r != nil {
+		switch {
+		case req.Mode != payment.ModeSubscription, r.Currency != req.Amount.Currency, r.Minor < req.Amount.Minor:
+			return payment.ChargeResult{}, payment.ErrInvalidRenewalAmount
+		}
+		recorrente, desconto = *r, r.Minor-req.Amount.Minor
+	}
 
 	form := url.Values{}
 	form.Set("success_url", req.SuccessURL)
@@ -130,8 +144,8 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 	// conversão, quando a houver, é decisão de quem chama.
 	form.Set("adaptive_pricing[enabled]", "false")
 	form.Set("line_items[0][quantity]", "1")
-	form.Set("line_items[0][price_data][currency]", strings.ToLower(req.Amount.Currency.String()))
-	form.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(req.Amount.Minor, 10))
+	form.Set("line_items[0][price_data][currency]", strings.ToLower(recorrente.Currency.String()))
+	form.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(recorrente.Minor, 10))
 	form.Set("line_items[0][price_data][product_data][name]", descriptionOf(req))
 
 	if req.Mode == payment.ModeSubscription {
@@ -149,6 +163,13 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 		form.Set("subscription_data[metadata]["+p.IntervalKey+"]", req.Interval)
 		for k, v := range req.Metadata {
 			form.Set("subscription_data[metadata]["+k+"]", v)
+		}
+		if desconto > 0 {
+			cupao, err := p.client.CreateOnceCoupon(ctx, desconto, recorrente.Currency.String(), "Desconto do primeiro ciclo")
+			if err != nil {
+				return payment.ChargeResult{}, err
+			}
+			form.Set("discounts[0][coupon]", cupao)
 		}
 	} else {
 		form.Set("mode", "payment")

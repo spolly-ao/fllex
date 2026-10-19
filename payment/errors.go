@@ -47,6 +47,11 @@ var (
 	// ErrAmountNotPositive: tentou-se cobrar zero ou menos.
 	ErrAmountNotPositive = errors.New("fllex: o valor a cobrar tem de ser positivo")
 
+	// ErrInvalidRenewalAmount é um preço de renovação que não serve: noutra
+	// moeda, numa cobrança que não é de subscrição, ou abaixo do primeiro
+	// ciclo (um desconto só no primeiro torna-o mais barato, nunca mais caro).
+	ErrInvalidRenewalAmount = errors.New("fllex: o preço da renovação não serve para esta cobrança")
+
 	// ErrExpired: o prazo para o cliente autorizar passou sem resposta dele (o
 	// telemóvel que não confirmou a tempo, o código que caducou). Não é uma
 	// recusa: ninguém disse que não, e nada foi cobrado. Separá-lo da recusa é

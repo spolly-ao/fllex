@@ -114,6 +114,13 @@ com `payment.SubscriptionVerifier`. Em ensaio, `stripe.Config.TestClock` faz
 nascer os clientes num relógio de teste do Stripe, que se adianta pela API para
 ver uma renovação sem esperar um mês.
 
+Um primeiro ciclo mais barato (o cupão de um produto que vale só no primeiro)
+pede-se com `Amount` igual ao que se cobra agora e `RenewalAmount` igual ao
+preço de cada renovação. O Stripe cria a subscrição pelo preço da renovação com
+um cupão de `duration: once`, e cobra o primeiro ciclo com o desconto e os
+seguintes pelo preço cheio, sozinho. No motor, quem chama cobra o primeiro
+ciclo pelo seu valor e renova pelo da subscrição.
+
 ### Preços por quantidade
 
 ```go

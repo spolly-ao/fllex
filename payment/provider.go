@@ -90,6 +90,14 @@ type ChargeRequest struct {
 	// Interval é a periodicidade, quando Mode é [ModeSubscription].
 	Interval string
 
+	// RenewalAmount é o preço de cada renovação, quando Mode é
+	// [ModeSubscription] e o primeiro ciclo custa menos (um desconto que vale
+	// só no primeiro). Amount é sempre o que se cobra agora; nulo, as
+	// renovações cobram Amount. Um provider que cobra os ciclos sozinho (o
+	// Stripe) cria a subscrição pelo preço da renovação com um desconto só no
+	// primeiro; os outros ignoram-no, porque quem chama cobra cada ciclo.
+	RenewalAmount *money.Amount
+
 	// Description é o texto que o cliente vê na factura e no extracto.
 	Description string
 

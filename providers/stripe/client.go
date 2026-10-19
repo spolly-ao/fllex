@@ -263,6 +263,28 @@ func (c *Client) CreateCustomer(ctx context.Context, email, name, testClock stri
 	return out.ID, nil
 }
 
+// CreateOnceCoupon cria um cupão que desconta amountOff (em unidades menores
+// da moeda) uma vez só, e se gasta numa subscrição só: é o desconto do
+// primeiro ciclo de uma subscrição que depois renova pelo preço cheio. O nome
+// aparece na factura do cliente.
+func (c *Client) CreateOnceCoupon(ctx context.Context, amountOff int64, currency, name string) (string, error) {
+	form := url.Values{}
+	form.Set("amount_off", strconv.FormatInt(amountOff, 10))
+	form.Set("currency", strings.ToLower(currency))
+	form.Set("duration", "once")
+	form.Set("max_redemptions", "1")
+	if name != "" {
+		form.Set("name", name)
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := c.post(ctx, "/v1/coupons", form, &out); err != nil {
+		return "", err
+	}
+	return out.ID, nil
+}
+
 // --- estornos ----------------------------------------------------------------
 
 // RefundResponse é a resposta de um estorno.
