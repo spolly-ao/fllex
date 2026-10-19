@@ -98,6 +98,7 @@ func TestParseMethod(t *testing.T) {
 		"direct_debit": MethodDirectDebit, "débito_directo": MethodDirectDebit, "dd": MethodDirectDebit, "dds": MethodDirectDebit,
 		"wallet": MethodWallet, "carteira": MethodWallet, "saldo": MethodWallet, "balance": MethodWallet,
 		"external": MethodExternal, "transferencia": MethodExternal, "depósito": MethodExternal, "deposit": MethodExternal,
+		"bank_transfer": MethodBankTransfer, "transferencia_bancaria": MethodBankTransfer, "transferência_bancária": MethodBankTransfer, "banktransfer": MethodBankTransfer,
 		"manual": MethodManual, "cortesia": MethodManual, "free": MethodManual, "grant": MethodManual,
 		"  Card  ":  MethodCard,
 		"inventado": "", "": "",

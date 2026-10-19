@@ -223,6 +223,11 @@ func TestMethodClassification(t *testing.T) {
 	if MethodExternal.SelfService() || MethodManual.SelfService() {
 		t.Error("transferência e atribuição manual são de backoffice")
 	}
+	// A transferência que o cliente escolhe e faz sozinho: aparece no ecrã de
+	// compra, confirma-se depois, e não cobra sozinha no ciclo seguinte.
+	if !MethodBankTransfer.SelfService() || !MethodBankTransfer.Deferred() || MethodBankTransfer.Recurring() || !MethodBankTransfer.Valid() {
+		t.Error("a transferência bancária é de auto-serviço, diferida e não recorrente")
+	}
 }
 
 func TestIsRetryable(t *testing.T) {

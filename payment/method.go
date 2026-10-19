@@ -56,6 +56,18 @@ const (
 	// com ele, porque quem o marca como pago é quem vê o extracto bancário.
 	MethodExternal Method = "external"
 
+	// MethodBankTransfer é a transferência bancária que o próprio cliente
+	// escolhe e faz: recebe os dados da conta de quem recebe, o valor exacto e
+	// um descritivo único, e transfere no banco ou no homebanking. É de
+	// auto-serviço, ao contrário do [MethodExternal], porque quem decide pagar
+	// assim é o cliente; quem a confirma continua a ser um operador, ao ver o
+	// movimento no extracto, porque não há gateway nenhum que a confirme.
+	//
+	// É um código à parte, e não o externo, de propósito: o externo é o
+	// pagamento que o backoffice regista por alguém, e não aparece num ecrã de
+	// compra. Este aparece, e tem de poder ser pedido por nome.
+	MethodBankTransfer Method = "bank_transfer"
+
 	// MethodManual é a atribuição sem cobrança (cortesia, migração de contrato
 	// em papel, cupão de 100%). Fica registada como pagamento de valor zero para
 	// a subscrição ter um ciclo de onde renovar.
@@ -66,7 +78,7 @@ const (
 // para um cliente escolher.
 var AllMethods = []Method{
 	MethodMCX, MethodReference, MethodBAIPaga, MethodEKwanza, MethodCard,
-	MethodPix, MethodDirectDebit, MethodWallet, MethodExternal, MethodManual,
+	MethodPix, MethodBankTransfer, MethodDirectDebit, MethodWallet, MethodExternal, MethodManual,
 }
 
 // ParseMethod normaliza a escrita de um método. Aceita as variantes que
@@ -88,6 +100,8 @@ func ParseMethod(s string) Method {
 		return MethodReference
 	case "pix":
 		return MethodPix
+	case "bank_transfer", "banktransfer", "transferencia_bancaria", "transferência_bancária":
+		return MethodBankTransfer
 	case "direct_debit", "directdebit", "debito_directo", "débito_directo", "dd", "dds":
 		return MethodDirectDebit
 	case "wallet", "carteira", "saldo", "balance":
@@ -136,7 +150,7 @@ func (m Method) Recurring() bool {
 // consulta de estado ou webhook, e de um prazo de validade.
 func (m Method) Deferred() bool {
 	return m == MethodReference || m == MethodEKwanza || m == MethodExternal ||
-		m == MethodBAIPaga || m == MethodPix
+		m == MethodBAIPaga || m == MethodPix || m == MethodBankTransfer
 }
 
 // Instant indica se o desfecho do pagamento é conhecido na própria chamada.

@@ -27,6 +27,11 @@ type Provider struct {
 	// TTL é o prazo dado a uma transferência antes de a cobrança expirar. Zero
 	// deixa-a sem prazo.
 	TTL time.Duration
+	// BankTransfer liga a transferência que o próprio cliente escolhe no ecrã
+	// de compra ([payment.MethodBankTransfer]). Desligada por omissão: é um
+	// método de auto-serviço, e quem já usa este provider só para o backoffice
+	// não deve passar a oferecê-lo a clientes por actualizar a biblioteca.
+	BankTransfer bool
 }
 
 // New cria o provider.
@@ -35,8 +40,13 @@ func New() *Provider { return &Provider{TTL: 7 * 24 * time.Hour} }
 // Name devolve "offline".
 func (p *Provider) Name() string { return "offline" }
 
-// Methods: transferência e atribuição manual.
+// Methods: a transferência registada pelo backoffice e a atribuição manual, e
+// a transferência que o cliente escolhe e faz sozinho quando [Provider.BankTransfer]
+// está ligada.
 func (p *Provider) Methods() []payment.Method {
+	if p.BankTransfer {
+		return []payment.Method{payment.MethodExternal, payment.MethodBankTransfer, payment.MethodManual}
+	}
 	return []payment.Method{payment.MethodExternal, payment.MethodManual}
 }
 
@@ -59,7 +69,7 @@ func (p *Provider) Configured() bool { return true }
 
 // Charge regista a cobrança sem a apresentar a ninguém.
 //
-// A transferência fica pendente até um operador a confirmar com
+// As duas transferências ficam pendentes até um operador as confirmar com
 // [Provider.Confirm]. A atribuição manual nasce já aprovada, porque não há
 // dinheiro nenhum a esperar.
 func (p *Provider) Charge(_ context.Context, req payment.ChargeRequest) (payment.ChargeResult, error) {
@@ -74,7 +84,10 @@ func (p *Provider) Charge(_ context.Context, req payment.ChargeRequest) (payment
 			ProviderRef: req.Reference,
 		}, nil
 
-	case payment.MethodExternal:
+	case payment.MethodExternal, payment.MethodBankTransfer:
+		if req.Method == payment.MethodBankTransfer && !p.BankTransfer {
+			return payment.ChargeResult{}, payment.ErrUnsupportedMethod
+		}
 		if !req.Amount.IsPositive() {
 			return payment.ChargeResult{}, payment.ErrAmountNotPositive
 		}
@@ -107,7 +120,7 @@ func (p *Provider) Confirm(pay *payment.Payment, operatorID, note string) error 
 	if pay == nil {
 		return payment.ErrNotFound
 	}
-	if pay.Method != payment.MethodExternal {
+	if pay.Method != payment.MethodExternal && pay.Method != payment.MethodBankTransfer {
 		return payment.ErrUnsupportedMethod
 	}
 	if err := pay.Approve(pay.ProviderRef); err != nil {

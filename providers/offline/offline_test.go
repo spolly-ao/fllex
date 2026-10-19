@@ -40,6 +40,39 @@ func TestExternalChargeWaitsForOperator(t *testing.T) {
 	}
 }
 
+func TestBankTransferWaitsForOperatorAndConfirms(t *testing.T) {
+	// A transferência que o cliente escolhe no ecrã de compra segue o mesmo
+	// caminho da que o backoffice regista: pendente, com prazo, até um
+	// operador a ver no extracto.
+	p := New()
+	pedido := payment.ChargeRequest{
+		Reference: "pay-1", Amount: money.FromMajor(5900, money.AOA), Method: payment.MethodBankTransfer,
+	}
+	// Desligada por omissão: quem usa o provider só no backoffice não a
+	// oferece a clientes por actualizar a biblioteca.
+	if _, err := p.Charge(context.Background(), pedido); !errors.Is(err, payment.ErrUnsupportedMethod) {
+		t.Fatalf("erro = %v, queria método não suportado com a transferência desligada", err)
+	}
+	p.BankTransfer = true
+	if len(p.Methods()) != 3 || p.Methods()[1] != payment.MethodBankTransfer {
+		t.Errorf("métodos = %v", p.Methods())
+	}
+	res, err := p.Charge(context.Background(), pedido)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != payment.KindPending || res.Status != payment.StatusPending || res.ExpiresAt == nil {
+		t.Errorf("resultado = %+v, queria pendente com prazo", res)
+	}
+	pay, _ := payment.NewPayment("p1", "pay-1", money.FromMajor(5900, money.AOA), payment.MethodBankTransfer)
+	if err := p.Confirm(pay, "operador-7", "movimento 123"); err != nil {
+		t.Fatal(err)
+	}
+	if pay.Status != payment.StatusApproved || pay.Metadata["confirmed_by"] != "operador-7" {
+		t.Errorf("pagamento = %+v", pay)
+	}
+}
+
 func TestConfirmRecordsWhoAndWhy(t *testing.T) {
 	p := New()
 	pay, _ := payment.NewPayment("p1", "sub-1", money.FromMajor(5900, money.AOA), payment.MethodExternal)

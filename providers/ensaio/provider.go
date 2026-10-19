@@ -59,6 +59,7 @@ func (p *Provider) Methods() []payment.Method {
 		payment.MethodPix,
 		payment.MethodWallet,
 		payment.MethodDirectDebit,
+		payment.MethodBankTransfer,
 		payment.MethodExternal,
 		payment.MethodManual,
 	}
@@ -124,7 +125,7 @@ func (p *Provider) Charge(_ context.Context, req payment.ChargeRequest) (payment
 			ProviderRef: req.Reference,
 		}, nil
 
-	case payment.MethodExternal:
+	case payment.MethodExternal, payment.MethodBankTransfer:
 		return payment.ChargeResult{
 			Kind:        payment.KindPending,
 			Status:      payment.StatusPending,
