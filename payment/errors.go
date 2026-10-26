@@ -52,6 +52,13 @@ var (
 	// ciclo (um desconto só no primeiro torna-o mais barato, nunca mais caro).
 	ErrInvalidRenewalAmount = errors.New("fllex: o preço da renovação não serve para esta cobrança")
 
+	// ErrUnsupportedDiscount é um desconto de vários ciclos que o provider não
+	// sabe levar ao gateway: um número de ciclos negativo que não é
+	// [DiscountForever], ou um intervalo em que o gateway não conta os ciclos
+	// (o Stripe conta os descontos repetidos em meses, e uma semana não é uma
+	// fração certa de um mês).
+	ErrUnsupportedDiscount = errors.New("fllex: o gateway não sabe aplicar este desconto")
+
 	// ErrExpired: o prazo para o cliente autorizar passou sem resposta dele (o
 	// telemóvel que não confirmou a tempo, o código que caducou). Não é uma
 	// recusa: ninguém disse que não, e nada foi cobrado. Separá-lo da recusa é

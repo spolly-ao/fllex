@@ -121,6 +121,14 @@ um cupão de `duration: once`, e cobra o primeiro ciclo com o desconto e os
 seguintes pelo preço cheio, sozinho. No motor, quem chama cobra o primeiro
 ciclo pelo seu valor e renova pelo da subscrição.
 
+Um desconto em mais do que um ciclo acrescenta `DiscountCycles`: N para os
+primeiros N ciclos, ou `payment.DiscountForever` para todos, e `RenewalAmount`
+passa a ser o preço de tabela. O Stripe recebe um cupão `forever`, ou
+`repeating` com os meses que os N ciclos cobrem (o Stripe conta os descontos
+repetidos em meses); um desconto de vários ciclos semanais recusa-se com
+`payment.ErrUnsupportedDiscount`, antes de se falar com o Stripe.
+`DiscountName` é o nome que o cliente vê na factura.
+
 A consulta de uma sessão paga do Stripe devolve também o payment intent por
 trás dela (`ChargeStatus.ChargeRef`) e a avaliação do Radar
 (`ChargeStatus.RiskLevel`: `normal`, `elevated`, `highest`, `not_assessed`).

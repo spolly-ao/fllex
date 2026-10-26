@@ -298,10 +298,21 @@ func (c *Client) CreateCustomer(ctx context.Context, email, name, testClock stri
 // primeiro ciclo de uma subscrição que depois renova pelo preço cheio. O nome
 // aparece na factura do cliente.
 func (c *Client) CreateOnceCoupon(ctx context.Context, amountOff int64, currency, name string) (string, error) {
+	return c.CreateCoupon(ctx, amountOff, currency, name, "once", 0)
+}
+
+// CreateCoupon cria um cupão que desconta amountOff (em unidades menores da
+// moeda) e se gasta numa subscrição só. duration é a do Stripe: once (a
+// primeira factura), forever (todas) ou repeating (as que nascem nos months
+// meses a seguir ao início). O nome aparece na factura do cliente.
+func (c *Client) CreateCoupon(ctx context.Context, amountOff int64, currency, name, duration string, months int) (string, error) {
 	form := url.Values{}
 	form.Set("amount_off", strconv.FormatInt(amountOff, 10))
 	form.Set("currency", strings.ToLower(currency))
-	form.Set("duration", "once")
+	form.Set("duration", duration)
+	if duration == "repeating" {
+		form.Set("duration_in_months", strconv.Itoa(months))
+	}
 	form.Set("max_redemptions", "1")
 	if name != "" {
 		form.Set("name", name)

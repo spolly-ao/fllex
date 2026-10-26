@@ -108,3 +108,96 @@ func TestChargeComPrimeiroCicloQuandoOCupaoFalha(t *testing.T) {
 		t.Errorf("criou %d sessões sem o desconto", sessoes)
 	}
 }
+
+// Um desconto em mais do que um ciclo: o cupão do Stripe é forever, ou
+// repeating com os meses que os ciclos cobrem, e leva o nome pedido.
+func TestChargeComDescontoDeVariosCiclos(t *testing.T) {
+	var cupao url.Values
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		if r.URL.Path == "/v1/coupons" {
+			cupao = r.PostForm
+			fmt.Fprint(w, `{"id":"cpn_x"}`)
+			return
+		}
+		fmt.Fprint(w, `{"id":"cs_1"}`)
+	})
+	defer done()
+	renovacao := money.New(2500, "USD")
+	casos := []struct {
+		nome      string
+		intervalo string
+		ciclos    int
+		nomeDado  string
+		duracao   string
+		meses     string
+		nomeVisto string
+	}{
+		{"sempre", "monthly", payment.DiscountForever, "", "forever", "", "Desconto"},
+		{"três meses", "monthly", 3, "BEMVINDO", "repeating", "3", "BEMVINDO"},
+		{"dois trimestres", "quarterly", 2, "", "repeating", "6", "Desconto"},
+		{"dois semestres", "semiannual", 2, "", "repeating", "12", "Desconto"},
+		{"dois anos", "yearly", 2, "", "repeating", "24", "Desconto"},
+		{"um ciclo com nome", "monthly", 1, "PRIMEIRO", "once", "", "PRIMEIRO"},
+	}
+	for _, c := range casos {
+		cupao = nil
+		if _, err := p.Charge(context.Background(), payment.ChargeRequest{
+			Amount: money.New(2000, "USD"), RenewalAmount: &renovacao, Mode: payment.ModeSubscription,
+			Interval: c.intervalo, DiscountCycles: c.ciclos, DiscountName: c.nomeDado,
+		}); err != nil {
+			t.Fatalf("%s: %v", c.nome, err)
+		}
+		if cupao.Get("duration") != c.duracao || cupao.Get("duration_in_months") != c.meses ||
+			cupao.Get("name") != c.nomeVisto || cupao.Get("amount_off") != "500" || cupao.Get("max_redemptions") != "1" {
+			t.Errorf("%s: cupão = %v", c.nome, cupao)
+		}
+	}
+}
+
+// Um desconto de vários ciclos que o Stripe não sabe contar recusa-se antes
+// de falar com ele. Sem desconto, os ciclos não contam.
+func TestChargeComDescontoQueOStripeNaoSabe(t *testing.T) {
+	chamadas := 0
+	p, done := provider(t, func(w http.ResponseWriter, _ *http.Request) {
+		chamadas++
+		fmt.Fprint(w, `{"id":"x"}`)
+	})
+	defer done()
+	renovacao := money.New(2500, "USD")
+	for nome, req := range map[string]payment.ChargeRequest{
+		"semanas":          {Amount: money.New(2000, "USD"), RenewalAmount: &renovacao, Mode: payment.ModeSubscription, Interval: "weekly", DiscountCycles: 2},
+		"ciclos negativos": {Amount: money.New(2000, "USD"), RenewalAmount: &renovacao, Mode: payment.ModeSubscription, Interval: "monthly", DiscountCycles: -2},
+	} {
+		if _, err := p.Charge(context.Background(), req); !errors.Is(err, payment.ErrUnsupportedDiscount) {
+			t.Errorf("%s: %v", nome, err)
+		}
+	}
+	if chamadas != 0 {
+		t.Errorf("%d pedidos ao Stripe", chamadas)
+	}
+	igual := money.New(2000, "USD")
+	if _, err := p.Charge(context.Background(), payment.ChargeRequest{
+		Amount: money.New(2000, "USD"), RenewalAmount: &igual, Mode: payment.ModeSubscription, Interval: "weekly", DiscountCycles: 2,
+	}); err != nil {
+		t.Errorf("sem desconto: %v", err)
+	}
+}
+
+// O CreateOnceCoupon é o CreateCoupon de uma vez, sem meses.
+func TestCreateOnceCoupon(t *testing.T) {
+	var cupao url.Values
+	p, done := provider(t, func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		cupao = r.PostForm
+		fmt.Fprint(w, `{"id":"cpn_1"}`)
+	})
+	defer done()
+	id, err := p.Client().CreateOnceCoupon(context.Background(), 300, "EUR", "")
+	if err != nil || id != "cpn_1" {
+		t.Fatalf("id %q, erro %v", id, err)
+	}
+	if cupao.Get("duration") != "once" || cupao.Get("duration_in_months") != "" || cupao.Get("currency") != "eur" || cupao.Has("name") {
+		t.Errorf("cupão = %v", cupao)
+	}
+}

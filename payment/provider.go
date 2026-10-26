@@ -68,6 +68,10 @@ const (
 	ModeSubscription Mode = "subscription"
 )
 
+// DiscountForever é o [ChargeRequest.DiscountCycles] de um desconto que vale
+// em todos os ciclos da subscrição.
+const DiscountForever = -1
+
 // ChargeRequest é o pedido de cobrança, comum a todos os providers. Cada
 // provider usa o que lhe interessa e ignora o resto.
 type ChargeRequest struct {
@@ -92,11 +96,23 @@ type ChargeRequest struct {
 
 	// RenewalAmount é o preço de cada renovação, quando Mode é
 	// [ModeSubscription] e o primeiro ciclo custa menos (um desconto que vale
-	// só no primeiro). Amount é sempre o que se cobra agora; nulo, as
-	// renovações cobram Amount. Um provider que cobra os ciclos sozinho (o
-	// Stripe) cria a subscrição pelo preço da renovação com um desconto só no
-	// primeiro; os outros ignoram-no, porque quem chama cobra cada ciclo.
+	// no primeiro, ou nos primeiros DiscountCycles). Amount é sempre o que se
+	// cobra agora; nulo, as renovações cobram Amount. Um provider que cobra os
+	// ciclos sozinho (o Stripe) cria a subscrição pelo preço da renovação com
+	// um desconto da diferença; os outros ignoram-no, porque quem chama cobra
+	// cada ciclo.
 	RenewalAmount *money.Amount
+
+	// DiscountCycles diz em quantos ciclos vale o desconto, quando
+	// RenewalAmount é maior do que Amount: zero e um, só no primeiro; N, nos
+	// primeiros N (o primeiro incluído); [DiscountForever], em todos. Com um
+	// desconto em mais do que um ciclo, RenewalAmount é o preço de tabela, e
+	// os ciclos com desconto cobram Amount. Sem RenewalAmount, não conta.
+	DiscountCycles int
+
+	// DiscountName é o nome do desconto que o cliente vê na factura do
+	// gateway (o código do cupão, por exemplo). Vazio, o provider escolhe.
+	DiscountName string
 
 	// Description é o texto que o cliente vê na factura e no extracto.
 	Description string

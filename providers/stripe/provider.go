@@ -103,6 +103,10 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 		}
 		recorrente, desconto = *r, r.Minor-req.Amount.Minor
 	}
+	duracao, meses, err := duracaoDoDesconto(req)
+	if desconto > 0 && err != nil {
+		return payment.ChargeResult{}, err
+	}
 
 	form := url.Values{}
 	form.Set("success_url", req.SuccessURL)
@@ -165,7 +169,14 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 			form.Set("subscription_data[metadata]["+k+"]", v)
 		}
 		if desconto > 0 {
-			cupao, err := p.client.CreateOnceCoupon(ctx, desconto, recorrente.Currency.String(), "Desconto do primeiro ciclo")
+			nome := req.DiscountName
+			if nome == "" {
+				nome = "Desconto"
+				if duracao == "once" {
+					nome = "Desconto do primeiro ciclo"
+				}
+			}
+			cupao, err := p.client.CreateCoupon(ctx, desconto, recorrente.Currency.String(), nome, duracao, meses)
 			if err != nil {
 				return payment.ChargeResult{}, err
 			}
@@ -725,4 +736,31 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+// duracaoDoDesconto traduz os ciclos do desconto para o cupão do Stripe:
+// once, forever, ou repeating com os meses que os ciclos cobrem. O Stripe
+// conta um desconto repetido em meses, e aplica-o às facturas que nascem
+// dentro deles: N ciclos de um intervalo de M meses são N vezes M meses, e a
+// factura do ciclo N+1, que nasce no fim do último mês, já paga o preço
+// cheio. Uma semana não é uma fração certa de um mês, e por isso um desconto
+// de vários ciclos semanais recusa-se em vez de se arredondar.
+func duracaoDoDesconto(req payment.ChargeRequest) (duracao string, meses int, err error) {
+	switch n := req.DiscountCycles; {
+	case n == payment.DiscountForever:
+		return "forever", 0, nil
+	case n == 0 || n == 1:
+		return "once", 0, nil
+	case n < 0:
+		return "", 0, payment.ErrUnsupportedDiscount
+	default:
+		unidade, conta := cycle.ParseInterval(req.Interval).StripeInterval()
+		switch unidade {
+		case "month":
+			return "repeating", n * conta, nil
+		case "year":
+			return "repeating", n * conta * 12, nil
+		}
+		return "", 0, payment.ErrUnsupportedDiscount
+	}
 }
