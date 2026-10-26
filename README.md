@@ -121,6 +121,14 @@ um cupão de `duration: once`, e cobra o primeiro ciclo com o desconto e os
 seguintes pelo preço cheio, sozinho. No motor, quem chama cobra o primeiro
 ciclo pelo seu valor e renova pelo da subscrição.
 
+A consulta de uma sessão paga do Stripe devolve também o payment intent por
+trás dela (`ChargeStatus.ChargeRef`) e a avaliação do Radar
+(`ChargeStatus.RiskLevel`: `normal`, `elevated`, `highest`, `not_assessed`).
+O nível é um sinal para quem tem regras de risco próprias, e não muda a
+confirmação: uma leitura que falha deixa-o vazio. As contestações do comprador
+(`charge.dispute.created`) chegam como `payment.EventDisputeOpened`, com o
+payment intent em `ChargeRef`.
+
 ### Preços por quantidade
 
 ```go

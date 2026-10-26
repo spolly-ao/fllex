@@ -45,6 +45,11 @@ const (
 	EventMandateRejected EventType = "mandate_rejected"
 	// EventMandateCancelled: o mandato foi cancelado.
 	EventMandateCancelled EventType = "mandate_cancelled"
+	// EventDisputeOpened é uma contestação do pagamento aberta pelo comprador
+	// no banco (um chargeback). ChargeRef é o pagamento contestado, Amount o
+	// valor contestado e Reason o motivo que o gateway dá. O dinheiro ainda não
+	// saiu: é o aviso de que pode sair.
+	EventDisputeOpened EventType = "dispute_opened"
 )
 
 // Event é um evento de gateway normalizado e já validado.

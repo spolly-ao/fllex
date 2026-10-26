@@ -267,6 +267,15 @@ func (p *Provider) VerifyCharge(ctx context.Context, statusRef, _ string) (payme
 			amt := money.New(sess.AmountTotal, money.NormalizeCurrency(sess.Currency))
 			st.Amount = &amt
 		}
+		if sess.PaymentIntent != "" {
+			// O payment intent é por onde chegam as disputas, e a última
+			// cobrança dele traz a avaliação do Radar. É um sinal: uma leitura
+			// que falha deixa o nível vazio, e o pagamento confirma-se na mesma.
+			st.ChargeRef = sess.PaymentIntent
+			if pi, err := p.client.GetPaymentIntentWithCharge(ctx, sess.PaymentIntent); err == nil {
+				st.RiskLevel = riskLevel(pi.RiskLevel())
+			}
+		}
 	case sess.Status == "expired":
 		st.Status = payment.StatusExpired
 	case sess.Status == "complete" && sess.PaymentIntent != "":
@@ -532,6 +541,24 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 		amt := money.New(o.AmountPaid, money.NormalizeCurrency(o.Currency))
 		ev.Amount = &amt
 
+	case "charge.dispute.created":
+		var o struct {
+			ID            string `json:"id"`
+			PaymentIntent string `json:"payment_intent"`
+			Charge        string `json:"charge"`
+			Amount        int64  `json:"amount"`
+			Currency      string `json:"currency"`
+			Reason        string `json:"reason"`
+		}
+		_ = json.Unmarshal(raw.Data.Object, &o)
+		ev.Type = payment.EventDisputeOpened
+		ev.ChargeRef = firstNonEmpty(o.PaymentIntent, o.Charge)
+		ev.Reason = o.Reason
+		if o.Currency != "" {
+			amt := money.New(o.Amount, money.NormalizeCurrency(o.Currency))
+			ev.Amount = &amt
+		}
+
 	case "charge.refunded":
 		var o struct {
 			ID            string            `json:"id"`
@@ -657,6 +684,18 @@ func normalizeSubscriptionStatus(s string) payment.Status {
 	default:
 		return payment.StatusPending
 	}
+}
+
+// riskLevel passa o nível do Radar ao vocabulário comum. Um nível que o Stripe
+// acrescente e que esta versão não conheça fica unknown, e não se perde.
+func riskLevel(s string) string {
+	switch s {
+	case "":
+		return ""
+	case payment.RiskNormal, payment.RiskElevated, payment.RiskHighest, payment.RiskNotAssessed:
+		return s
+	}
+	return payment.RiskUnknown
 }
 
 func descriptionOf(req payment.ChargeRequest) string {

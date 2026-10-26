@@ -221,9 +221,29 @@ type ChargeStatus struct {
 	// guarda a subscrição a guarde pelo que o gateway confirmou.
 	SubscriptionRef string
 	CustomerRef     string
+	// ChargeRef é o identificador do pagamento no gateway, quando é outro que
+	// não o que se consultou (no Stripe, o payment intent por trás da sessão).
+	// É por ele que chegam as disputas e os estornos feitos no painel do
+	// gateway, e por isso quem confirma guarda-o.
+	ChargeRef string
+	// RiskLevel é a avaliação de risco que o gateway fez ao pagamento, quando a
+	// faz (o Radar do Stripe): [RiskNormal], [RiskElevated], [RiskHighest],
+	// [RiskNotAssessed] ou [RiskUnknown]. Vazio quando o gateway não avalia ou
+	// a avaliação não se conseguiu ler: é um sinal, e nunca uma razão para não
+	// confirmar o que o gateway diz que está pago.
+	RiskLevel string
 	// Raw guarda a resposta original.
 	Raw map[string]any
 }
+
+// Os níveis de risco de [ChargeStatus.RiskLevel], com os nomes do Radar.
+const (
+	RiskNormal      = "normal"
+	RiskElevated    = "elevated"
+	RiskHighest     = "highest"
+	RiskNotAssessed = "not_assessed"
+	RiskUnknown     = "unknown"
+)
 
 // Provider é o contrato mínimo de um gateway de pagamentos. Tudo o que um
 // gateway saiba fazer para além disto declara-se pelas capacidades opcionais

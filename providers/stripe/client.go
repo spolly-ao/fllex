@@ -167,6 +167,36 @@ func (c *Client) GetPaymentIntent(ctx context.Context, id string) (*PaymentInten
 	return &out, nil
 }
 
+// PaymentIntentWithCharge é o pagamento com a última cobrança expandida, que é
+// onde o Radar deixa a avaliação de risco (outcome.risk_level).
+type PaymentIntentWithCharge struct {
+	ID           string `json:"id"`
+	Status       string `json:"status"`
+	LatestCharge *struct {
+		ID      string `json:"id"`
+		Outcome *struct {
+			RiskLevel string `json:"risk_level"`
+		} `json:"outcome"`
+	} `json:"latest_charge"`
+}
+
+// RiskLevel é o nível do Radar na última cobrança, ou vazio sem ela.
+func (pi PaymentIntentWithCharge) RiskLevel() string {
+	if pi.LatestCharge == nil || pi.LatestCharge.Outcome == nil {
+		return ""
+	}
+	return pi.LatestCharge.Outcome.RiskLevel
+}
+
+// GetPaymentIntentWithCharge lê um pagamento com a última cobrança expandida.
+func (c *Client) GetPaymentIntentWithCharge(ctx context.Context, id string) (*PaymentIntentWithCharge, error) {
+	var out PaymentIntentWithCharge
+	if err := c.get(ctx, "/v1/payment_intents/"+url.PathEscape(id)+"?expand%5B%5D=latest_charge", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // --- subscrições -------------------------------------------------------------
 
 // CancelSubscription cancela uma subscrição. Com atPeriodEnd, marca-a para
