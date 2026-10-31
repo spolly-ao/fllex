@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/spolly-ao/fllex/money"
@@ -85,8 +86,14 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 	if referencia == "" {
 		return payment.ChargeResult{}, ErrReferenceRequired
 	}
+	// A EMIS só aceita 15 carateres. Com segredo de aviso, ela vê a referência
+	// curta e a inteira volta no endereço do aviso; sem ele, não há como ligar
+	// uma referência encurtada ao pagamento, e recusa-se antes de pedir o token.
+	if len(referencia) > TamanhoMaximoDaReferencia && len(p.client.cfg.CallbackSecret) == 0 {
+		return payment.ChargeResult{}, ErrReferenceTooLong
+	}
 
-	token, bruto, err := p.client.FrameToken(ctx, referencia, req.Amount.Decimal())
+	token, bruto, err := p.client.frameToken(ctx, ReferenciaCurta(referencia), req.Amount.Decimal(), p.client.CallbackURLDe(referencia))
 	if err != nil {
 		return payment.ChargeResult{}, err
 	}
@@ -114,16 +121,32 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 
 // ParseWebhook lê o desfecho que a EMIS envia para a `CallbackURL`.
 //
-// **Não há assinatura para verificar.** A EMIS envia um POST em claro, e o
-// gateway online não tem consulta de estado que sirva de segunda opinião. O que
-// este método faz, e é tudo o que se pode fazer, é recusar o que não bate certo
-// com a configuração desta conta.
+// **A EMIS não assina o aviso**, e o gateway online não tem consulta de estado
+// que sirva de segunda opinião. O que se pode fazer, e este método faz, é:
 //
-// O que não passa devolve [payment.EventNone] em vez de erro: um erro faria o
-// gateway reenviar em ciclo, e não há reenvio que corrija um evento que não é
-// nosso.
-func (p *Provider) ParseWebhook(payload []byte, _ string) (*payment.Event, error) {
+//   - com [Config.CallbackSecret], exigir a [Client.Assinatura] que seguiu no
+//     endereço desta cobrança, passada em `signature` (o último segmento do
+//     caminho). Sem ela, ou com ela errada, devolve [payment.ErrBadSignature].
+//     A referência do evento é a que a assinatura assina, e a que a EMIS
+//     devolve no corpo, se devolver alguma, tem de ser a curta ou a inteira;
+//   - recusar o que não bate certo com a configuração desta conta: o ponto de
+//     venda, a moeda e o tipo de transacção.
+//
+// O que não passa destes filtros devolve [payment.EventNone] em vez de erro: um
+// erro faria o gateway reenviar em ciclo, e não há reenvio que corrija um
+// evento que não é nosso. **O valor tem de ser comparado por quem chama**, com
+// o `Event.Amount`.
+func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Event, error) {
 	ev := &payment.Event{Type: payment.EventNone, Provider: p.Name(), Status: payment.StatusPending}
+
+	assinada := ""
+	if len(p.client.cfg.CallbackSecret) > 0 {
+		ref, ok := p.client.conferir(strings.TrimSpace(signature))
+		if !ok {
+			return nil, payment.ErrBadSignature
+		}
+		assinada = ref
+	}
 
 	var cb Callback
 	if err := json.Unmarshal(payload, &cb); err != nil {
@@ -134,9 +157,20 @@ func (p *Provider) ParseWebhook(payload []byte, _ string) (*payment.Event, error
 
 	ev.ID = cb.ID
 	ev.ChargeRef = cb.ID
-	ev.Reference = strings.TrimSpace(cb.Reference.ID.String())
 	ev.Method = payment.MethodMCX
 	ev.Raw = bruto
+	refs := cb.Referencias()
+	if len(refs) > 0 {
+		ev.Reference = refs[0]
+	}
+	if assinada != "" {
+		// A referência que a assinatura assina é a que manda. Se o corpo trouxer
+		// outra, o aviso é de outra cobrança a usar este endereço, e não move nada.
+		ev.Reference = assinada
+		if len(refs) > 0 && !slices.ContainsFunc(refs, func(r string) bool { return r == assinada || r == ReferenciaCurta(assinada) }) {
+			return ev, nil
+		}
+	}
 
 	// O valor vai preenchido mesmo quando o evento acaba por ser ignorado.
 	// Quem confirma compara-o com o que cobrou, e é essa comparação que apanha

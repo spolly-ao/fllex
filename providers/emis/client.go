@@ -90,6 +90,19 @@ type Config struct {
 	// CallbackURL é o endereço público para onde a EMIS envia o desfecho.
 	CallbackURL string
 
+	// CallbackSecret é o segredo com que se assina o endereço de aviso de cada
+	// cobrança ([Client.Assinatura]).
+	//
+	// Com ele, cada cobrança manda à EMIS o seu próprio endereço, o
+	// [Config.CallbackURL] seguido da referência inteira e do HMAC dela, e o
+	// [Provider.ParseWebhook] recusa um aviso que não traga essa assinatura. É
+	// também o que deixa cobrar com uma referência maior do que os 15 carateres
+	// da EMIS: ela vê a [ReferenciaCurta], e a inteira volta no endereço.
+	//
+	// Vazio, o endereço é o mesmo para todas as cobranças, e o único filtro dos
+	// avisos é o ponto de venda.
+	CallbackSecret []byte
+
 	// CSSURL é a folha de estilo aplicada ao frame, para ele parecer da loja e
 	// não de um sítio qualquer. Vazia usa o aspecto por omissão da EMIS.
 	CSSURL string
@@ -142,8 +155,14 @@ func (c *Client) Configured() bool { return c.cfg.Token != "" }
 // duplicar.
 func (c *Client) Config() Config { return c.cfg }
 
-// FrameToken pede à EMIS o token com que se abre o frame de pagamento.
+// FrameToken pede à EMIS o token com que se abre o frame de pagamento, com o
+// endereço de aviso desta referência ([Client.CallbackURLDe]). A referência
+// segue como está: encurtá-la é do [Provider.Charge].
 func (c *Client) FrameToken(ctx context.Context, referencia, valor string) (string, map[string]any, error) {
+	return c.frameToken(ctx, referencia, valor, c.CallbackURLDe(referencia))
+}
+
+func (c *Client) frameToken(ctx context.Context, referencia, valor, aviso string) (string, map[string]any, error) {
 	corpo := frameTokenRequest{
 		Reference:   referencia,
 		Amount:      valor,
@@ -151,7 +170,7 @@ func (c *Client) FrameToken(ctx context.Context, referencia, valor string) (stri
 		Mobile:      canalPagamento,
 		Card:        canalDesligado,
 		CSSURL:      c.cfg.CSSURL,
-		CallbackURL: c.cfg.CallbackURL,
+		CallbackURL: aviso,
 	}
 	if c.cfg.Card {
 		corpo.Card = canalPagamento

@@ -1,6 +1,9 @@
 package emis
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // frameTokenRequest é o corpo do pedido de token de frame.
 //
@@ -39,17 +42,16 @@ type frameTokenResponse struct {
 // Callback é o corpo que a EMIS envia para a `CallbackURL` quando o cliente
 // termina, ou desiste, dentro do frame.
 //
-// A forma vem de produção e não de documentação: `reference` é um objecto e não
-// uma string, e é o `reference.id` que traz de volta o que lhe mandámos. Ler
-// `reference` como string dá sempre vazio, e um evento sem referência é um
-// pagamento que ninguém encontra.
+// A forma vem de produção e não de documentação, e não é sempre a mesma:
+// `reference` chega como objecto (`{"id": ...}`) ou como texto, e a referência
+// que seguiu no pedido pode voltar também em `merchantReferenceNumber`. Por
+// isso a referência lê-se pelas duas ([ReferenciaDoAviso] e
+// [Callback.Referencias]).
 type Callback struct {
 	// ID é o identificador da transacção do lado da EMIS.
 	ID string `json:"id"`
 	// Reference traz de volta a referência que seguiu no pedido.
-	Reference struct {
-		ID Texto `json:"id"`
-	} `json:"reference"`
+	Reference ReferenciaDoAviso `json:"reference"`
 	// Amount é o valor efectivamente cobrado.
 	Amount Texto `json:"amount"`
 	// Status é "ACCEPTED" quando o cliente confirmou.
@@ -58,8 +60,9 @@ type Callback struct {
 	TransactionType string `json:"transactionType"`
 	// Currency é a moeda, que tem de ser AOA.
 	Currency string `json:"currency"`
-	// MerchantReferenceNumber é a referência que a EMIS atribui à operação.
-	MerchantReferenceNumber string `json:"merchantReferenceNumber"`
+	// MerchantReferenceNumber é, em produção, a referência que seguiu no pedido,
+	// ecoada de volta.
+	MerchantReferenceNumber Texto `json:"merchantReferenceNumber"`
 	// PointOfSale identifica o terminal. É o campo que diz se o evento é desta
 	// conta ou de outra que aponte para o mesmo endereço.
 	PointOfSale struct {
@@ -101,3 +104,41 @@ func (t *Texto) UnmarshalJSON(b []byte) error {
 
 // String devolve o valor como texto.
 func (t Texto) String() string { return string(t) }
+
+// ReferenciaDoAviso é o campo `reference` do aviso, que chega como objecto
+// (`{"id": "..."}`) ou como texto. Os dois dão o mesmo ID; outra coisa dá vazio.
+type ReferenciaDoAviso struct {
+	ID Texto `json:"id"`
+}
+
+// UnmarshalJSON aceita o objecto e o texto.
+func (r *ReferenciaDoAviso) UnmarshalJSON(b []byte) error {
+	var t string
+	if json.Unmarshal(b, &t) == nil {
+		r.ID = Texto(t)
+		return nil
+	}
+	var o struct {
+		ID Texto `json:"id"`
+	}
+	if json.Unmarshal(b, &o) == nil {
+		r.ID = o.ID
+		return nil
+	}
+	// Um número solto ou uma lista não são uma referência: fica vazio, como no
+	// [Texto], e o aviso continua a ler-se.
+	r.ID = ""
+	return nil
+}
+
+// Referencias são as referências que o aviso traz, sem as vazias: a de
+// `reference` primeiro, depois a de `merchantReferenceNumber`.
+func (cb Callback) Referencias() []string {
+	var out []string
+	for _, r := range []string{cb.Reference.ID.String(), cb.MerchantReferenceNumber.String()} {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}

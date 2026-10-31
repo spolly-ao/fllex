@@ -17,7 +17,7 @@ go get github.com/spolly-ao/fllex
 | Pacote | Métodos | Particularidade |
 |---|---|---|
 | `providers/stripe` | cartão, subscrições recorrentes, Pix em reais | API REST directa, sem SDK; webhooks assinados; o Pix confirma-se no aviso `checkout.session.async_payment_succeeded` |
-| `providers/emis` | Multicaixa Express | directo na EMIS, sem agregador; frame de pagamento e callback sem assinatura |
+| `providers/emis` | Multicaixa Express | directo na EMIS, sem agregador; frame de pagamento, e o callback sem assinatura da EMIS conferido por um endereço de aviso assinado por cobrança (`CallbackSecret`), que deixa também usar referências maiores do que os 15 carateres que a EMIS aceita |
 | `providers/baipaga` | BAI PAGA | directo no banco; autorização por OTP no telemóvel, callback assinado e consulta de estado |
 | `providers/momenu` | Multicaixa Express, referência | kwanza; emite factura fiscal; webhook assinado e chave de idempotência |
 | `providers/proxypay` | referência ATM | fila de pagamentos confirmados como rede de segurança |
