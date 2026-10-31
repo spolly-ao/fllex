@@ -130,7 +130,8 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 //     A referência do evento é a que a assinatura assina, e a que a EMIS
 //     devolve no corpo, se devolver alguma, tem de ser a curta ou a inteira;
 //   - recusar o que não bate certo com a configuração desta conta: o ponto de
-//     venda, a moeda e o tipo de transacção.
+//     venda (quando configurado), a moeda e o tipo de transacção. Sem ponto de
+//     venda, só um aviso assinado move alguma coisa.
 //
 // O que não passa destes filtros devolve [payment.EventNone] em vez de erro: um
 // erro faria o gateway reenviar em ciclo, e não há reenvio que corrija um
@@ -179,13 +180,17 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 		ev.Amount = &v
 	}
 
-	// O ponto de venda é o único campo que diz se este evento é desta conta.
-	// Sem ele configurado não há filtro nenhum, e um provider que aceita tudo
-	// aceita também o que um estranho lhe mandar: por isso, sem ponto de venda,
-	// não se aceita nada. O `services/core` recusa guardar a credencial sem
-	// este campo, para que este caso não chegue a existir em produção.
+	// O que diz que este evento é desta conta é a assinatura do endereço, ou o
+	// ponto de venda. Configurado, o ponto de venda tem de bater, com ou sem
+	// assinatura. Sem ele, só a assinatura sobra: um aviso que não a traga (o
+	// provider sem [Config.CallbackSecret]) não tem filtro nenhum, e um provider
+	// que aceita tudo aceita também o que um estranho lhe mandar, por isso não
+	// se aceita nada.
 	pos := strings.TrimSpace(p.client.Config().POSID)
-	if pos == "" || pos != strings.TrimSpace(cb.PointOfSale.ID.String()) {
+	switch {
+	case pos != "" && pos != strings.TrimSpace(cb.PointOfSale.ID.String()):
+		return ev, nil
+	case pos == "" && assinada == "":
 		return ev, nil
 	}
 	if !strings.EqualFold(strings.TrimSpace(cb.Currency), string(money.AOA)) {

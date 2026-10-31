@@ -149,3 +149,31 @@ func TestReferenciaDoAvisoLeAsFormasQueChegam(t *testing.T) {
 		t.Error("o erro diz o limite")
 	}
 }
+
+func TestSemPontoDeVendaSoOAvisoAssinadoPaga(t *testing.T) {
+	longa := "pay_nnJJyqF1kzEWVwVNYyauMk"
+	curta := ReferenciaCurta(longa)
+	corpo := func(pos string) []byte {
+		return []byte(`{"id":"emis-1","reference":{"id":"` + curta + `"},"amount":100,"status":"ACCEPTED",` +
+			`"transactionType":"PAYMENT","currency":"AOA","pointOfSale":{"id":"` + pos + `"}}`)
+	}
+
+	// Com segredo e sem ponto de venda, como no Kubeta: a assinatura chega, e o
+	// ponto de venda do corpo, seja qual for, não se confere.
+	p := New(Config{Token: "token", CallbackURL: "https://api.exemplo.ao/gateways/emis/", CallbackSecret: []byte("segredo-dos-avisos")})
+	certa := p.Client().Assinatura(longa)
+	for _, pos := range []string{"433220", "999999", ""} {
+		ev, err := p.ParseWebhook(corpo(pos), certa)
+		if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != longa {
+			t.Errorf("ponto de venda %q: (%+v, %v)", pos, ev, err)
+		}
+	}
+	if ev, err := p.ParseWebhook(corpo("433220"), longa+".00"); !errors.Is(err, payment.ErrBadSignature) || ev != nil {
+		t.Errorf("assinatura errada: (%v, %v)", ev, err)
+	}
+
+	// Com segredo e com ponto de venda, o ponto de venda continua a ter de bater.
+	if ev, err := comSegredo("").ParseWebhook(corpo("999999"), certa); err != nil || ev.Type != payment.EventNone {
+		t.Errorf("outro ponto de venda com ele configurado: (%+v, %v)", ev, err)
+	}
+}

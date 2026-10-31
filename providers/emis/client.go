@@ -83,8 +83,10 @@ type Config struct {
 	// POSID é o identificador do ponto de venda que a EMIS associa ao token.
 	//
 	// Não é usado para cobrar: é usado para **recusar** callbacks que não sejam
-	// desta conta. Sem ele, o único filtro que resta é a referência, e a
-	// referência não é segredo nenhum. Ver [Provider.ParseWebhook].
+	// desta conta. É opcional quando há [Config.CallbackSecret], porque a
+	// assinatura do endereço já diz de que cobrança é o aviso; sem nenhum dos
+	// dois, o único filtro que restava era a referência, que não é segredo
+	// nenhum, e por isso não se aceita aviso nenhum. Ver [Provider.ParseWebhook].
 	POSID string
 
 	// CallbackURL é o endereço público para onde a EMIS envia o desfecho.
