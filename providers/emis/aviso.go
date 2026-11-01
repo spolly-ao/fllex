@@ -60,13 +60,27 @@ func (c *Client) mac(referencia string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-// CallbackURLDe é o endereço de aviso da cobrança com esta referência: o
-// [Config.CallbackURL], e, com segredo, a [Client.Assinatura] no fim.
+// MarcaDoDestino é o sítio, no [Config.CallbackRelay], onde entra o endereço
+// de aviso da cobrança.
+const MarcaDoDestino = "{destino}"
+
+// CallbackURLDe é o endereço que segue para a EMIS com a cobrança desta
+// referência: o [Config.CallbackURL], com segredo a [Client.Assinatura] no fim,
+// e, com [Config.CallbackRelay], tudo isso dentro do encaminhador.
 func (c *Client) CallbackURLDe(referencia string) string {
-	if len(c.cfg.CallbackSecret) == 0 {
-		return c.cfg.CallbackURL
+	destino := c.cfg.CallbackURL
+	if len(c.cfg.CallbackSecret) > 0 {
+		destino = strings.TrimRight(c.cfg.CallbackURL, "/") + "/" + url.PathEscape(c.Assinatura(referencia))
 	}
-	return strings.TrimRight(c.cfg.CallbackURL, "/") + "/" + url.PathEscape(c.Assinatura(referencia))
+	relay := strings.TrimSpace(c.cfg.CallbackRelay)
+	switch {
+	case relay == "":
+		return destino
+	case strings.Contains(relay, MarcaDoDestino):
+		return strings.Replace(relay, MarcaDoDestino, destino, 1)
+	default:
+		return relay + destino
+	}
 }
 
 // conferir lê a assinatura que chegou no endereço do aviso e devolve a

@@ -177,3 +177,47 @@ func TestSemPontoDeVendaSoOAvisoAssinadoPaga(t *testing.T) {
 		t.Errorf("outro ponto de venda com ele configurado: (%+v, %v)", ev, err)
 	}
 }
+
+func TestOAvisoPassaPeloEncaminhador(t *testing.T) {
+	const ref = "pay_nnJJyqF1kzEWVwVNYyauMk"
+	base := Config{CallbackURL: "https://api.exemplo.ao/gateways/emis", CallbackSecret: []byte("segredo-dos-avisos")}
+	destino := New(base).Client().CallbackURLDe(ref)
+
+	for nome, c := range map[string]struct{ relay, quer string }{
+		"sem encaminhador": {"", destino},
+		"com a marca":      {"https://relay.exemplo/v2/publish/{destino}?token=abc=", "https://relay.exemplo/v2/publish/" + destino + "?token=abc="},
+		"sem a marca":      {" https://relay.exemplo/v2/publish/ ", "https://relay.exemplo/v2/publish/" + destino},
+	} {
+		cfg := base
+		cfg.CallbackRelay = c.relay
+		if got := New(cfg).Client().CallbackURLDe(ref); got != c.quer {
+			t.Errorf("%s: %q, queria %q", nome, got, c.quer)
+		}
+	}
+	// Sem segredo, o destino é o endereço fixo, também dentro do encaminhador.
+	if got := New(Config{CallbackURL: "https://x.ao/cb", CallbackRelay: "https://r/{destino}"}).Client().CallbackURLDe(ref); got != "https://r/https://x.ao/cb" {
+		t.Errorf("sem segredo: %q", got)
+	}
+}
+
+func TestChargeMandaOEnderecoDoEncaminhador(t *testing.T) {
+	srv, corpo := servidor(t, `{"id":"tok-1"}`, http.StatusOK)
+	p := New(Config{
+		Token: "token", CallbackURL: "https://api.exemplo.ao/gateways/emis",
+		CallbackSecret: []byte("segredo-dos-avisos"), BaseURL: srv.URL,
+		CallbackRelay: "https://relay.exemplo/v2/publish/{destino}?token=abc",
+	})
+	ref := "pay_nnJJyqF1kzEWVwVNYyauMk"
+	if _, err := p.Charge(context.Background(), payment.ChargeRequest{Reference: ref, Amount: money.FromMajor(100, money.AOA), Method: payment.MethodMCX}); err != nil {
+		t.Fatal(err)
+	}
+	quer := "https://relay.exemplo/v2/publish/https://api.exemplo.ao/gateways/emis/" + p.Client().Assinatura(ref) + "?token=abc"
+	if (*corpo)["callbackUrl"] != quer {
+		t.Fatalf("callbackUrl = %v, queria %q", (*corpo)["callbackUrl"], quer)
+	}
+	// O aviso que o encaminhador entrega no endereço assinado paga como sem ele.
+	ev, err := p.ParseWebhook(avisoAceite(`{"id":"`+ReferenciaCurta(ref)+`"}`), p.Client().Assinatura(ref))
+	if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != ref {
+		t.Fatalf("aviso pelo encaminhador: (%+v, %v)", ev, err)
+	}
+}

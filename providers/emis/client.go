@@ -105,6 +105,19 @@ type Config struct {
 	// avisos é o ponto de venda.
 	CallbackSecret []byte
 
+	// CallbackRelay é um encaminhador por onde o aviso passa antes de chegar ao
+	// [Config.CallbackURL], para contratos em que a EMIS só entrega avisos a
+	// domínios que já conhece. É um modelo com [MarcaDoDestino] no sítio do
+	// endereço de aviso da cobrança, por exemplo
+	// `https://qstash.upstash.io/v2/publish/{destino}?qstash_token=...`, e o
+	// destino entra tal e qual, sem ser codificado, que é a forma que estes
+	// encaminhadores esperam. Sem a marca, o destino vai no fim.
+	//
+	// O encaminhador entrega o mesmo corpo no endereço assinado, e por isso a
+	// assinatura continua a ser conferida como sem ele. Leva quase sempre um
+	// segredo do encaminhador, e trata-se como segredo.
+	CallbackRelay string
+
 	// CSSURL é a folha de estilo aplicada ao frame, para ele parecer da loja e
 	// não de um sítio qualquer. Vazia usa o aspecto por omissão da EMIS.
 	CSSURL string
