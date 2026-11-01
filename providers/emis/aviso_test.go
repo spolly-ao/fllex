@@ -100,7 +100,7 @@ func TestParseWebhookComSegredoExigeAAssinatura(t *testing.T) {
 	}
 
 	// A referência curta no objecto, a inteira em texto, e nenhuma: todas
-	// pagam, e o evento leva a referência inteira, a que a assinatura assina.
+	// pagam, e o evento leva a referência curta, a que a assinatura assina.
 	for nome, corpo := range map[string][]byte{
 		"curta no objecto": avisoAceite(`{"id":"` + curta + `"}`),
 		"inteira em texto": avisoAceite(`"` + longa + `"`),
@@ -108,7 +108,7 @@ func TestParseWebhookComSegredoExigeAAssinatura(t *testing.T) {
 		"no merchant ref":  []byte(`{"id":"e","merchantReferenceNumber":"` + curta + `","amount":"100.00","status":"ACCEPTED","transactionType":"PAYMENT","currency":"AOA","pointOfSale":{"id":"433220"}}`),
 	} {
 		ev, err := p.ParseWebhook(corpo, certa)
-		if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != longa {
+		if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != curta {
 			t.Errorf("%s: (%+v, %v)", nome, ev, err)
 		}
 	}
@@ -164,7 +164,7 @@ func TestSemPontoDeVendaSoOAvisoAssinadoPaga(t *testing.T) {
 	certa := p.Client().Assinatura(longa)
 	for _, pos := range []string{"433220", "999999", ""} {
 		ev, err := p.ParseWebhook(corpo(pos), certa)
-		if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != longa {
+		if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != curta {
 			t.Errorf("ponto de venda %q: (%+v, %v)", pos, ev, err)
 		}
 	}
@@ -217,7 +217,65 @@ func TestChargeMandaOEnderecoDoEncaminhador(t *testing.T) {
 	}
 	// O aviso que o encaminhador entrega no endereço assinado paga como sem ele.
 	ev, err := p.ParseWebhook(avisoAceite(`{"id":"`+ReferenciaCurta(ref)+`"}`), p.Client().Assinatura(ref))
-	if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != ref {
+	if err != nil || ev.Type != payment.EventChargeSucceeded || ev.Reference != ReferenciaCurta(ref) {
 		t.Fatalf("aviso pelo encaminhador: (%+v, %v)", ev, err)
+	}
+}
+
+// O endereço inteiro cabe nos 255 carateres da EMIS: com um encaminhador longo
+// (o publish do QStash com um token de 128 carateres) o HMAC encurta, e o
+// aviso continua a conferir; um HMAC encurtado de mais, ou adulterado, não.
+func TestOEnderecoCabeNos255DaEMIS(t *testing.T) {
+	ref := "pay_HdDfZpaOuNZH5NQsXgxP7K"
+	relay := "https://qstash.upstash.io/v2/publish/{destino}?qstash_token=" + strings.Repeat("t", 128)
+	p := New(Config{Token: "token", CallbackURL: "https://pay-api.vibra.ao/gateways/emis", CallbackSecret: []byte("segredo-dos-avisos"), CallbackRelay: relay})
+	aviso := p.Client().CallbackURLDe(ref)
+	if len(aviso) > TamanhoMaximoDoAviso {
+		t.Fatalf("o endereço tem %d carateres: %s", len(aviso), aviso)
+	}
+	assinatura := p.Client().Assinatura(ref)
+	mac := assinatura[strings.LastIndexByte(assinatura, '.')+1:]
+	if len(aviso) != TamanhoMaximoDoAviso || len(mac) < TamanhoMinimoDoMAC || len(mac) >= tamanhoDoMAC {
+		t.Fatalf("endereço %d, HMAC %d", len(aviso), len(mac))
+	}
+	if ev, err := p.ParseWebhook(avisoAceite(`{"id":"`+ReferenciaCurta(ref)+`"}`), assinatura); err != nil || ev.Type != payment.EventChargeSucceeded {
+		t.Fatalf("o aviso com o HMAC encurtado: (%+v, %v)", ev, err)
+	}
+	// Sem encaminhador, o HMAC vai inteiro.
+	inteiro := New(Config{CallbackURL: "https://pay-api.vibra.ao/gateways/emis", CallbackSecret: []byte("segredo-dos-avisos")}).Client().Assinatura(ref)
+	if len(inteiro) != len(ReferenciaCurta(ref))+1+tamanhoDoMAC || !strings.HasPrefix(inteiro, assinatura) {
+		t.Fatalf("sem encaminhador: %q, com: %q", inteiro, assinatura)
+	}
+	// O inteiro também confere, e um HMAC curto de mais, comprido de mais ou
+	// com um caráter trocado não.
+	if _, err := p.ParseWebhook(avisoAceite(`null`), inteiro); err != nil {
+		t.Errorf("o HMAC inteiro: %v", err)
+	}
+	trocado := []byte(assinatura)
+	trocado[len(trocado)-1] ^= 1
+	for nome, a := range map[string]string{
+		"curto de mais":    assinatura[:strings.LastIndexByte(assinatura, '.')+TamanhoMinimoDoMAC],
+		"comprido de mais": inteiro + "A",
+		"trocado":          string(trocado),
+	} {
+		if _, err := p.ParseWebhook(avisoAceite(`null`), a); !errors.Is(err, payment.ErrBadSignature) {
+			t.Errorf("%s: %v, queria ErrBadSignature", nome, err)
+		}
+	}
+}
+
+// Quando nem o HMAC mais curto cabe, a cobrança recusa-se sem pedir o token.
+func TestUmEnderecoQueNaoCabeNaoChegaAEMIS(t *testing.T) {
+	srv, corpo := servidor(t, `{"id":"tok-1"}`, http.StatusOK)
+	p := New(Config{
+		Token: "token", CallbackURL: "https://pay-api.vibra.ao/gateways/emis", CallbackSecret: []byte("s"), BaseURL: srv.URL,
+		CallbackRelay: "https://relay.exemplo/{destino}?t=" + strings.Repeat("t", 200),
+	})
+	_, err := p.Charge(context.Background(), payment.ChargeRequest{Reference: "pay_HdDfZpaOuNZH5NQsXgxP7K", Amount: money.FromMajor(100, money.AOA), Method: payment.MethodMCX})
+	if !errors.Is(err, ErrCallbackTooLong) {
+		t.Fatalf("erro = %v, queria ErrCallbackTooLong", err)
+	}
+	if len(*corpo) != 0 {
+		t.Fatalf("o pedido chegou à EMIS: %v", *corpo)
 	}
 }

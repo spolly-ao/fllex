@@ -3,6 +3,7 @@ package emis
 import (
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net/url"
@@ -16,6 +17,29 @@ import (
 // between 1 and 15"). Um identificador de pagamento com prefixo e vinte e dois
 // carateres, que é o normal, não cabe.
 const TamanhoMaximoDaReferencia = 15
+
+// TamanhoMaximoDoAviso é o tamanho máximo do endereço de aviso que a EMIS
+// aceita no pedido do token.
+//
+// Também não está escrito: mediu-se contra a EMIS de produção. Até 255
+// carateres dá o token; com 256 responde HTTP 400 com o código 201 e a
+// mensagem "internal error", que não aponta para o endereço. Com um
+// [Config.CallbackRelay] como o publish do QStash, o encaminhador e o token
+// dele ocupam quase tudo, e é por isso que a [Client.Assinatura] encolhe.
+const TamanhoMaximoDoAviso = 255
+
+// TamanhoMinimoDoMAC é o menor HMAC que a [Client.Assinatura] usa, em
+// carateres de base64url: 16 são 96 bits, que nenhum ataque pela rede
+// adivinha. Abaixo disto a cobrança recusa-se com [ErrCallbackTooLong].
+const TamanhoMinimoDoMAC = 16
+
+// tamanhoDoMAC é o HMAC-SHA256 inteiro em base64url, sem preenchimento.
+const tamanhoDoMAC = 43
+
+// ErrCallbackTooLong diz que o endereço de aviso não cabe nos 255 carateres da
+// EMIS, nem com a assinatura mais curta. Recusa-se antes de pedir o token, em
+// vez de mandar à EMIS um pedido que ela recusa com "internal error".
+var ErrCallbackTooLong = errors.New("emis: o endereço de aviso passa dos 255 carateres que a EMIS aceita")
 
 // ErrReferenceTooLong diz que a referência não cabe nos 15 carateres da EMIS e
 // que não há [Config.CallbackSecret] para a encurtar.
@@ -39,8 +63,10 @@ func ReferenciaCurta(referencia string) string {
 }
 
 // Assinatura é o que vai no fim do endereço de aviso de uma cobrança: a
-// referência inteira, um ponto, e o HMAC-SHA256 dela com o
-// [Config.CallbackSecret], em hexadecimal.
+// [ReferenciaCurta], um ponto, e o HMAC-SHA256 dela com o
+// [Config.CallbackSecret], em base64url, encurtado ao que couber nos
+// [TamanhoMaximoDoAviso] carateres do endereço inteiro (nunca abaixo de
+// [TamanhoMinimoDoMAC]).
 //
 // # Porque é que o segredo vai no endereço
 //
@@ -50,14 +76,41 @@ func ReferenciaCurta(referencia string) string {
 // diferente por cobrança, com um HMAC que só quem tem o segredo calcula, é a
 // única coisa que um estranho que saiba a referência e o valor não consegue
 // forjar.
+//
+// # Porque é a curta, e não a inteira
+//
+// A inteira não cabe: com um encaminhador, o endereço passava dos 255
+// carateres. A curta é a que a EMIS vê e devolve no aviso, e é com ela que o
+// evento chega a quem chama ([Provider.ParseWebhook]).
 func (c *Client) Assinatura(referencia string) string {
-	return referencia + "." + c.mac(referencia)
+	curta := ReferenciaCurta(referencia)
+	mac := c.mac(curta)
+	livre := TamanhoMaximoDoAviso - len(c.envolver(c.baseDoAviso()+"/")) - len(url.PathEscape(curta)) - 1
+	if livre < len(mac) {
+		mac = mac[:max(livre, TamanhoMinimoDoMAC)]
+	}
+	return curta + "." + mac
 }
 
-func (c *Client) mac(referencia string) string {
+func (c *Client) mac(curta string) string {
 	m := hmac.New(sha256.New, c.cfg.CallbackSecret)
-	m.Write([]byte(referencia))
-	return hex.EncodeToString(m.Sum(nil))
+	m.Write([]byte(curta))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+func (c *Client) baseDoAviso() string { return strings.TrimRight(c.cfg.CallbackURL, "/") }
+
+// envolver põe o endereço dentro do [Config.CallbackRelay], se houver.
+func (c *Client) envolver(destino string) string {
+	relay := strings.TrimSpace(c.cfg.CallbackRelay)
+	switch {
+	case relay == "":
+		return destino
+	case strings.Contains(relay, MarcaDoDestino):
+		return strings.Replace(relay, MarcaDoDestino, destino, 1)
+	default:
+		return relay + destino
+	}
 }
 
 // MarcaDoDestino é o sítio, no [Config.CallbackRelay], onde entra o endereço
@@ -70,26 +123,23 @@ const MarcaDoDestino = "{destino}"
 func (c *Client) CallbackURLDe(referencia string) string {
 	destino := c.cfg.CallbackURL
 	if len(c.cfg.CallbackSecret) > 0 {
-		destino = strings.TrimRight(c.cfg.CallbackURL, "/") + "/" + url.PathEscape(c.Assinatura(referencia))
+		destino = c.baseDoAviso() + "/" + url.PathEscape(c.Assinatura(referencia))
 	}
-	relay := strings.TrimSpace(c.cfg.CallbackRelay)
-	switch {
-	case relay == "":
-		return destino
-	case strings.Contains(relay, MarcaDoDestino):
-		return strings.Replace(relay, MarcaDoDestino, destino, 1)
-	default:
-		return relay + destino
-	}
+	return c.envolver(destino)
 }
 
 // conferir lê a assinatura que chegou no endereço do aviso e devolve a
-// referência que ela assina, se o HMAC bater.
+// referência curta que ela assina, se o HMAC bater. Aceita o HMAC encurtado
+// até [TamanhoMinimoDoMAC], porque o tamanho depende do endereço de cada
+// conta, e compara-o com o começo do inteiro.
 func (c *Client) conferir(assinatura string) (string, bool) {
 	i := strings.LastIndexByte(assinatura, '.')
 	if i <= 0 {
 		return "", false
 	}
-	referencia, recebido := assinatura[:i], assinatura[i+1:]
-	return referencia, hmac.Equal([]byte(recebido), []byte(c.mac(referencia)))
+	curta, recebido := assinatura[:i], assinatura[i+1:]
+	if len(recebido) < TamanhoMinimoDoMAC || len(recebido) > tamanhoDoMAC {
+		return "", false
+	}
+	return curta, hmac.Equal([]byte(recebido), []byte(c.mac(curta)[:len(recebido)]))
 }

@@ -93,7 +93,11 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 		return payment.ChargeResult{}, ErrReferenceTooLong
 	}
 
-	token, bruto, err := p.client.frameToken(ctx, ReferenciaCurta(referencia), req.Amount.Decimal(), p.client.CallbackURLDe(referencia))
+	aviso := p.client.CallbackURLDe(referencia)
+	if len(aviso) > TamanhoMaximoDoAviso {
+		return payment.ChargeResult{}, ErrCallbackTooLong
+	}
+	token, bruto, err := p.client.frameToken(ctx, ReferenciaCurta(referencia), req.Amount.Decimal(), aviso)
 	if err != nil {
 		return payment.ChargeResult{}, err
 	}
@@ -127,8 +131,10 @@ func (p *Provider) Charge(ctx context.Context, req payment.ChargeRequest) (payme
 //   - com [Config.CallbackSecret], exigir a [Client.Assinatura] que seguiu no
 //     endereço desta cobrança, passada em `signature` (o último segmento do
 //     caminho). Sem ela, ou com ela errada, devolve [payment.ErrBadSignature].
-//     A referência do evento é a que a assinatura assina, e a que a EMIS
-//     devolve no corpo, se devolver alguma, tem de ser a curta ou a inteira;
+//     A referência do evento é a que a assinatura assina, que é a
+//     [ReferenciaCurta] da cobrança (quem chama liga-a à cobrança com a mesma
+//     função), e a que a EMIS devolve no corpo, se devolver alguma, tem de ser
+//     essa;
 //   - recusar o que não bate certo com a configuração desta conta: o ponto de
 //     venda (quando configurado), a moeda e o tipo de transacção. Sem ponto de
 //     venda, só um aviso assinado move alguma coisa.
@@ -165,10 +171,11 @@ func (p *Provider) ParseWebhook(payload []byte, signature string) (*payment.Even
 		ev.Reference = refs[0]
 	}
 	if assinada != "" {
-		// A referência que a assinatura assina é a que manda. Se o corpo trouxer
-		// outra, o aviso é de outra cobrança a usar este endereço, e não move nada.
+		// A referência que a assinatura assina (a curta) é a que manda. Se o
+		// corpo trouxer outra, o aviso é de outra cobrança a usar este endereço, e
+		// não move nada.
 		ev.Reference = assinada
-		if len(refs) > 0 && !slices.ContainsFunc(refs, func(r string) bool { return r == assinada || r == ReferenciaCurta(assinada) }) {
+		if len(refs) > 0 && !slices.ContainsFunc(refs, func(r string) bool { return r == assinada || ReferenciaCurta(r) == assinada }) {
 			return ev, nil
 		}
 	}
